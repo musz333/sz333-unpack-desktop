@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+out/
+release/
+dist/
+
+# 本机配置
+*.local
+.env
+.env.*
+
+# 编辑器
+.vscode/
+.idea/
+*.suo
+*.user
+
+# 系统
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 日志
+npm-debug.log*
+*.log
