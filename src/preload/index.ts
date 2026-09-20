@@ -30,6 +30,8 @@ const api: DesktopApi = {
 
   engineSelfCheck: () => ipcRenderer.invoke('engine:selfcheck'),
   appInfo: () => ipcRenderer.invoke('app:info'),
+  markFirstRunDone: () => ipcRenderer.invoke('app:firstRunDone'),
+  resetFirstRun: () => ipcRenderer.invoke('app:resetFirstRun'),
 
   getHistory: () => ipcRenderer.invoke('history:list'),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
@@ -53,6 +55,12 @@ const api: DesktopApi = {
     const h = (_e: unknown, p: import('@shared/types').WorkflowProgressEvent) => cb(p);
     ipcRenderer.on('ev:wf-progress', h);
     return () => ipcRenderer.removeListener('ev:wf-progress', h);
+  },
+
+  onRenamed: (cb: (info: { taskId: string; outDir: string; dirChanged: boolean; renames: { from: string; to: string }[]; conflicts: number }) => void) => {
+    const h = (_e: unknown, info: { taskId: string; outDir: string; dirChanged: boolean; renames: { from: string; to: string }[]; conflicts: number }) => cb(info);
+    ipcRenderer.on('ev:renamed', h);
+    return () => ipcRenderer.removeListener('ev:renamed', h);
   },
 
   onToast: (cb) => {
