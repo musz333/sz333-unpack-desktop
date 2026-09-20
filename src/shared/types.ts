@@ -114,6 +114,12 @@ export interface TaskRecord {
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type OverwritePolicy = 'overwrite' | 'skip' | 'rename';
 
+/** 源文件处理策略：保留 / 彻底删除 */
+export type SourcePolicy = 'keep' | 'delete';
+
+/** 中文路径策略：auto = 仅在需要时自动转英文 / force = 始终转英文 / off = 保持原样 */
+export type NonAsciiPolicy = 'auto' | 'force' | 'off';
+
 export interface AppSettings {
   theme: ThemeMode;
   language: 'zh-CN' | 'en-US';
@@ -122,7 +128,10 @@ export interface AppSettings {
   extractToSubfolder: boolean;
   overwrite: OverwritePolicy;
   keepDirStructure: boolean;
-  deleteSourceAfterExtract: boolean;
+  /** 源文件处理：保留 / 彻底删除（默认；回收站方案已按用户要求取消——大体积资源会占满回收站） */
+  sourcePolicy: SourcePolicy;
+  /** 中文路径策略：auto（默认，输出目录含中文时自动换英文目录并改包内中文名）/ force / off */
+  nonAsciiPolicy: NonAsciiPolicy;
   maxConcurrent: 1 | 2 | 4;
   notifyOnFinish: boolean;
   autoOpenOutDir: boolean;
@@ -131,6 +140,8 @@ export interface AppSettings {
   wfView: 'card' | 'list';
   /** 已知密码列表（按尝试顺序） */
   passwords: string[];
+  /** 是否已完成首次使用引导 */
+  firstRunDone: boolean;
   windowBounds?: { width: number; height: number; x?: number; y?: number };
 }
 
@@ -141,12 +152,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   extractToSubfolder: true,
   overwrite: 'rename',
   keepDirStructure: true,
-  deleteSourceAfterExtract: false,
+  sourcePolicy: 'delete',
+  nonAsciiPolicy: 'auto',
   maxConcurrent: 1,
   notifyOnFinish: true,
   autoOpenOutDir: false,
   rememberPasswords: false,
   wfView: 'card',
+  firstRunDone: false,
   passwords: []
 };
 
@@ -284,6 +297,11 @@ export interface DesktopApi {
   openExternal(url: string): Promise<void>;
   windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<void>;
 
+  /** 标记首次引导已完成 */
+  markFirstRunDone(): Promise<boolean>;
+  /** 重置首次引导标记（用于"重新查看首次引导"） */
+  resetFirstRun(): Promise<boolean>;
+
   /** 应用信息（设置页"关于"） */
   appInfo(): Promise<{ version: string; electron: string; githubUrl: string; configDir: string; packaged: boolean }>;
 
@@ -297,6 +315,14 @@ export interface DesktopApi {
   onTask(cb: (task: TaskRecord) => void): () => void;
   onWorkflows(cb: (cards: WorkflowCard[]) => void): () => void;
   onWorkflowProgress(cb: (e: WorkflowProgressEvent) => void): () => void;
+  /** 中文路径转英文的改名对照 */
+  onRenamed(cb: (info: {
+    taskId: string;
+    outDir: string;
+    dirChanged: boolean;
+    renames: { from: string; to: string }[];
+    conflicts: number;
+  }) => void): () => void;
   onToast(cb: (t: { kind: 'ok' | 'warn' | 'bad' | 'info'; title: string; desc?: string }) => void): () => void;
   onTheme(cb: (mode: ThemeMode) => void): () => void;
 
