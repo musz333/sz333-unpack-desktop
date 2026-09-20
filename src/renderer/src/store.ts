@@ -115,6 +115,26 @@ export const useStore = create<State>((set, get) => ({
     window.api.onTask((t) => get().updateTask(t));
     window.api.onToast((t) => get().toast(t.kind, t.title, t.desc ?? ''));
     window.api.onWorkflows((cards) => set({ workflows: cards }));
+    window.api.onRenamed((info) => {
+      // 把"原名 → 新名"写进任务日志，用户随时能对照找回文件
+      const lines = info.renames.map((r) => {
+        const from = r.from.split(/[\\/]/).pop() ?? r.from;
+        const to = r.to.split(/[\\/]/).pop() ?? r.to;
+        return `${from} → ${to}`;
+      });
+      set((s) => ({
+        wfLog: [
+          {
+            kind: 'probe' as const,
+            text:
+              `中文路径已转英文：输出目录 ${info.dirChanged ? '已改为英文目录' : '未变'}，` +
+              `共改名 ${info.renames.length} 项${info.conflicts ? `（同名加序号 ${info.conflicts} 项）` : ''}` +
+              (lines.length ? `\n${lines.slice(0, 12).join('\n')}` : '')
+          },
+          ...s.wfLog
+        ].slice(0, 60)
+      }));
+    });
     window.api.onWorkflowProgress((e) => {
       set((s) => ({ wfLog: [{ kind: e.kind, text: e.text, anchorPassword: e.anchorPassword }, ...s.wfLog].slice(0, 60) }));
       // 只对关键事件弹 Toast，避免"走探测/记失误"这类过程信息刷屏
