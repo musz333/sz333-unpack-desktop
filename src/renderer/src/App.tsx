@@ -7,6 +7,7 @@ import { ArchiveDetail } from './components/ArchiveDetail';
 import { WorkflowsView } from './components/WorkflowsView';
 import { HistoryView } from './components/HistoryView';
 import { PasswordDialog, SettingsDialog, Toasts } from './components/Dialogs';
+import { FirstRunWizard } from './components/FirstRunWizard';
 import { Button } from './components/ui';
 
 export default function App() {
@@ -19,12 +20,25 @@ export default function App() {
   const addPaths = useStore((s) => s.addPaths);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardFromSettings, setWizardFromSettings] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [wide, setWide] = useState(true);
 
   useEffect(() => {
     void init();
   }, [init]);
+
+  // 首次运行：自动弹出引导（设置里已有 firstRunDone 则不再打扰）
+  const settings = useStore((s) => s.settings);
+  useEffect(() => {
+    if (ready && settings && settings.firstRunDone === false) {
+      setWizardFromSettings(false);
+      setWizardOpen(true);
+    }
+    // 只在首次加载后判断一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   // 主题：跟随系统时监听系统切换
   useEffect(() => {
@@ -109,7 +123,19 @@ export default function App() {
         </div>
       ) : null}
 
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onRestartWizard={() => {
+          setWizardFromSettings(true);
+          setWizardOpen(true);
+        }}
+      />
+      <FirstRunWizard
+        open={wizardOpen}
+        fromSettings={wizardFromSettings}
+        onClose={() => setWizardOpen(false)}
+      />
       <PasswordDialog />
       <Toasts />
     </div>
