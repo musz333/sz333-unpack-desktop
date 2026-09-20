@@ -111,7 +111,15 @@ export function PasswordDialog() {
 /* ==================================================================
    设置
    ================================================================== */
-export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsDialog({
+  open,
+  onClose,
+  onRestartWizard
+}: {
+  open: boolean;
+  onClose: () => void;
+  onRestartWizard: () => void;
+}) {
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.patchSettings);
   const theme = useStore((s) => s.theme);
@@ -191,6 +199,54 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             <ToggleRow label="解压完成后打开输出目录" checked={settings.autoOpenOutDir} onChange={(v) => void patch({ autoOpenOutDir: v })} />
           </Section>
 
+          {/* 源文件处理：保留 / 彻底删除 */}
+          <Section title="源文件处理" icon="trash">
+            <p className="text-xs leading-5 text-fg-faint">
+              解压成功后，原始分卷与中间压缩包怎么处理。处理失败或中途取消的分组，无论选哪项都不会删源文件。
+            </p>
+            <PolicyRadio
+              checked={settings.sourcePolicy === 'keep'}
+              onClick={() => void patch({ sourcePolicy: 'keep' })}
+              title="保留原始文件"
+              desc="最安全，磁盘占用更高。"
+            />
+
+            <PolicyRadio
+              checked={settings.sourcePolicy === 'delete'}
+              onClick={() => void patch({ sourcePolicy: 'delete' })}
+              title="彻底删除（默认，不可恢复）"
+              desc="不进回收站、不额外占磁盘，适合大体积资源。一经删除无法恢复。"
+              tone="bad"
+            />
+          </Section>
+
+          {/* 中文路径 */}
+          <Section title="中文路径" icon="file">
+            <p className="text-xs leading-5 text-fg-faint">
+              不少老资源包解压到中文路径时会乱码或失败。开启后，解压时中文目录名与包内中文文件名会被替换为全英文名，
+              并逐条写入任务日志（原名 → 新名），保证你能对照找回文件。
+            </p>
+            <PolicyRadio
+              checked={settings.nonAsciiPolicy === 'auto'}
+              onClick={() => void patch({ nonAsciiPolicy: 'auto' })}
+              title="自动（推荐）"
+              desc="仅在输出路径含中文时转换。"
+            />
+            <PolicyRadio
+              checked={settings.nonAsciiPolicy === 'force'}
+              onClick={() => void patch({ nonAsciiPolicy: 'force' })}
+              title="始终转成全英文路径"
+              desc="无论原路径是否含中文，一律使用英文目录名与文件名。"
+              tone="warn"
+            />
+            <PolicyRadio
+              checked={settings.nonAsciiPolicy === 'off'}
+              onClick={() => void patch({ nonAsciiPolicy: 'off' })}
+              title="保持原样（不做任何转换）"
+              desc="保留中文名称。"
+            />
+          </Section>
+
           {/* 性能与行为 */}
           <Section title="性能与行为" icon="gauge">
             <Field label="同时处理任务数">
@@ -211,11 +267,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               </div>
             </Field>
 
-            <ToggleRow
-              label="解压后删除源文件（移入回收站）"
-              checked={settings.deleteSourceAfterExtract}
-              onChange={(v) => void patch({ deleteSourceAfterExtract: v })}
-            />
             <ToggleRow label="完成后发送系统通知" checked={settings.notifyOnFinish} onChange={(v) => void patch({ notifyOnFinish: v })} />
           </Section>
 
@@ -250,7 +301,11 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </Section>
         </div>
 
-        <div className="flex justify-end border-t border-line bg-ink-1 px-4 py-3">
+        <div className="flex items-center gap-2 border-t border-line bg-ink-1 px-4 py-3">
+          <Button size="sm" variant="ghost" icon="sliders" onClick={() => { void window.api.resetFirstRun(); onRestartWizard(); }}>
+            重新查看首次运行引导
+          </Button>
+          <span className="ml-auto" />
           <Button size="sm" variant="primary" onClick={onClose}>
             完成
           </Button>
@@ -326,8 +381,46 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs text-fg-muted">{label}</span>
-      {children}
-    </div>
+      {children}    </div>
+  );
+}
+
+/** 策略单选项（源文件处理 / 中文路径 共用） */
+function PolicyRadio({
+  checked,
+  onClick,
+  title,
+  desc,
+  tone
+}: {
+  checked: boolean;
+  onClick: () => void;
+  title: string;
+  desc: string;
+  tone?: 'warn' | 'bad';
+}) {
+  const color = tone === 'bad' ? 'text-bad' : tone === 'warn' ? 'text-warn' : 'text-fg';
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'flex w-full items-start gap-2.5 rounded-card border p-2.5 text-left transition-colors duration-150 ease-out',
+        checked ? 'border-brand bg-brand-soft' : 'border-line bg-ink-0 hover:border-line-strong'
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border',
+          checked ? 'border-brand bg-brand' : 'border-line-strong bg-ink-0'
+        ].join(' ')}
+      >
+        {checked ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+      </span>
+      <span className="min-w-0">
+        <span className={['block text-sm font-medium', color].join(' ')}>{title}</span>
+        <span className="mt-0.5 block text-xs leading-5 text-fg-muted">{desc}</span>
+      </span>
+    </button>
   );
 }
 
