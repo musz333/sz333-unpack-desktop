@@ -54,7 +54,8 @@ function loadSettings() {
   try {
     fs.mkdirSync(userDataDir(), { recursive: true });
     if (fs.existsSync(settingsFile())) {
-      const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+      const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) as Partial<AppSettings>;
+      // 与默认值合并：保证旧配置文件里缺失的新字段也能拿到默认值
       settings = { ...DEFAULT_SETTINGS, ...raw };
     }
   } catch {
@@ -173,6 +174,10 @@ const tasks = new TaskManager({
   workflows: workflowApi,
   onWorkflowProgress: (payload) => win?.webContents.send('ev:wf-progress', payload),
   onWorkflowsChanged: () => emitWorkflows(),
+  onRenamed: (info) => {
+    win?.webContents.send('ev:renamed', info);
+    logLine(`中文路径转英文：目录变更=${info.dirChanged} 改名=${info.renames.length} 同名加序号=${info.conflicts}`);
+  },
   emit: (task) => {
     win?.webContents.send(CH.evTask, task);
     if (task.status === 'done' || task.status === 'failed') {
@@ -496,6 +501,18 @@ function registerIpc() {
   ipcMain.handle(CH.taskCancel, (_e, id: string) => tasks.cancel(id));
   ipcMain.handle(CH.taskRetry, (_e, id: string, password?: string, outDir?: string) => tasks.retry(id, password, outDir));
   ipcMain.handle(CH.taskRemove, (_e, id: string) => tasks.remove(id));
+
+  /* ---- 首次引导 ---- */
+  ipcMain.handle('app:firstRunDone', () => {
+    settings.firstRunDone = true;
+    persistSettings();
+    return true;
+  });
+  ipcMain.handle('app:resetFirstRun', () => {
+    settings.firstRunDone = false;
+    persistSettings();
+    return true;
+  });
 
   /* ---- 应用信息（设置页展示） ---- */
   ipcMain.handle('app:info', () => ({
