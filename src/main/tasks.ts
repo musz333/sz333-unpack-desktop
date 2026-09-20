@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AppSettings, TaskRecord, TaskStatus, TaskOp, WorkflowProgressEvent } from '@shared/types';
-import { classifyError, parsePercent, run7z, uniqueDir, moveToRecycleBin } from './engine';
+import { classifyError, parsePercent, run7z, uniqueDir } from './engine';
+import { applyAsciiPolicy, archiveStem, type RenamePair } from './asciiPath';
+import { hasNonAscii } from './asciiName';
 import {
   matchWorkflow,
   buildFromResult,
@@ -34,6 +36,14 @@ export interface TaskManagerDeps {
   onWorkflowProgress?: (e: WorkflowProgressEvent) => void;
   /** 工作流数据变更（界面刷新卡片） */
   onWorkflowsChanged?: () => void;
+  /** ASCII 改名上报（界面在日志里逐条列出 原名 → 新名，保证用户找得到文件） */
+  onRenamed?: (info: {
+    taskId: string;
+    outDir: string;
+    dirChanged: boolean;
+    renames: RenamePair[];
+    conflicts: number;
+  }) => void;
 }
 
 /**
@@ -320,11 +330,51 @@ export class TaskManager extends EventEmitter {
       return;
     }
 
+    // ---- 中文路径处理（老资源包对中文路径不友好）----
+    let finalOutDir = outDir;
+    if (settings.nonAsciiPolicy !== 'off') {
+      const needByPolicy = settings.nonAsciiPolicy === 'force' || hasNonAscii(outDir);
+      if (needByPolicy) {
+        try {
+          const ascii = applyAsciiPolicy(outDir, archiveStem(path.basename(src), sourceFiles));
+          finalOutDir = ascii.outDir;
+          if (ascii.dirChanged || ascii.renames.length > 0) {
+            this.deps.onRenamed?.({
+              taskId: t.id,
+              outDir: finalOutDir,
+              dirChanged: ascii.dirChanged,
+              renames: ascii.renames,
+              conflicts: ascii.conflicts
+            });
+            this.deps.toast(
+              'info',
+              '已将中文路径转为英文',
+              `目录${ascii.dirChanged ? '已改为 ' + finalOutDir.split(/[\\/]/).pop() : '保持不变'} · ` +
+                `改名 ${ascii.renames.length} 项${ascii.conflicts ? ` · 同名加序号 ${ascii.conflicts} 项` : ''}`
+            );
+          }
+        } catch (e) {
+          this.deps.toast('warn', '中文路径转换失败', e instanceof Error ? e.message : String(e));
+        }
+      }
+    }
+
     // 统计结果
-    const stat = dirStats(outDir);
-    if (settings.deleteSourceAfterExtract) {
-      const r = await moveToRecycleBin(t.sourcePaths.filter((p) => fs.existsSync(p)));
-      this.deps.toast('info', '源文件已移入回收站', `共 ${r.moved} 个文件${r.failed.length ? `，${r.failed.length} 个失败` : ''}`);
+    const stat = dirStats(finalOutDir);
+
+    // ---- 源文件处理：保留 / 彻底删除 ----
+    const sources = t.sourcePaths.filter((p) => fs.existsSync(p));
+    if (settings.sourcePolicy === 'delete' && sources.length) {
+      let deleted = 0;
+      for (const p of sources) {
+        try {
+          fs.rmSync(p, { force: true });
+          deleted += 1;
+        } catch {
+          /* ignore */
+        }
+      }
+      this.deps.toast('info', '源文件已彻底删除', `共 ${deleted} 个文件（不可恢复）`);
     }
     if (settings.rememberPasswords && password && !settings.passwords.includes(password)) {
       this.deps.emit({ ...this.publicTask(t) });
@@ -367,12 +417,12 @@ export class TaskManager extends EventEmitter {
 
     this.setStatus(t.id, 'done', {
       progress: 100,
-      outputPath: outDir,
+      outputPath: finalOutDir,
       outputSize: stat.size,
       fileCount: stat.files
     });
     this.deps.toast('ok', '解压完成', `${t.label} → ${stat.files} 个文件`);
-    if (settings.autoOpenOutDir) this.emit('open', outDir);
+    if (settings.autoOpenOutDir) this.emit('open', finalOutDir);
   }
 
   /** 取消后清理未完成的输出目录（只在目录为空或仅含部分文件时删除，避免误删用户已有数据） */
