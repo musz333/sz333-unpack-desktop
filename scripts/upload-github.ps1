@@ -139,20 +139,33 @@ foreach ($rel in $all) {
   $content = [Convert]::ToBase64String($bytes)
   $uri = "$api/repos/$owner/$repoName/contents/$rel"
 
-  # 已存在则需带 sha 才能真正覆盖
+  # 已存在则需带 sha 才能真正覆盖（GET 失败多为瞬时网络问题，重试两次）
   $sha = $null
-  $head = Invoke-GH 'Get' $uri
-  if ($head) { $sha = ($head.Content | ConvertFrom-Json).sha }
+  for ($i = 1; $i -le 2; $i++) {
+    $head = Invoke-GH 'Get' $uri
+    if ($head) { $sha = ($head.Content | ConvertFrom-Json).sha; break }
+    Start-Sleep -Seconds 2
+  }
 
   $body = @{ message = "Add $rel"; content = $content }
   if ($sha) { $body.sha = $sha }
   $json = $body | ConvertTo-Json -Compress
 
-  $r = Invoke-GH 'Put' $uri $json
+  # PUT 也重试，避免一次网络抖动就要人工重跑
+  $r = $null
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $r = Invoke-GH 'Put' $uri $json
+    if ($r) { break }
+    if ($attempt -lt 3) {
+      Write-Host "        第 $attempt 次失败，2 秒后重试…" -ForegroundColor DarkYellow
+      Start-Sleep -Seconds 2
+    }
+  }
   if ($r) {
     Write-Host ("  [OK] {0}  ({1:N1} KB)" -f $rel, ($fi.Length / 1KB)) -ForegroundColor Green
     $uploaded++
   } else {
+    Write-Host "  [×]  $rel 上传失败（已重试 3 次）" -ForegroundColor Red
     $failed++
   }
 }
