@@ -28,8 +28,11 @@ npm run dist:portable     # 只出便携版（体积更小、不写注册表）
 
 | 文件 | 说明 |
 | --- | --- |
-| `sz333 解压工具-1.0.0-x64-nsis.exe` | NSIS 安装包（可选安装目录、创建快捷方式） |
-| `sz333 解压工具-1.0.0-便携版.exe` | 免安装便携版，双击即用 |
+| `sz333 解压工具-1.0.2-x64-setup.exe` | NSIS 安装包（可选安装目录、创建快捷方式） |
+| `sz333 解压工具-1.0.2-便携版.exe` | 免安装便携版，双击即用 |
+
+> 也可以直接从 GitHub Releases 下载现成 exe（无需自行编译）：
+> https://github.com/muszz333/sz333-unpack-desktop/releases
 
 > 如需真正的双击即用构建脚本，直接运行 `scripts/build.bat`（内含 Node 检查、依赖安装、构建、打包四步）。
 
