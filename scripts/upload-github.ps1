@@ -106,7 +106,7 @@ $include = @(
   'tsconfig.json', 'tsconfig.node.json', 'tsconfig.web.json',
   'resources/7z.exe',
   'build/icon.ico',
-  'scripts/build.bat', 'scripts/make-icon.mjs', 'scripts/upload-github.ps1',
+  'scripts/build.bat', 'scripts/make-icon.mjs', 'scripts/upload-github.ps1', 'scripts/publish-release.ps1',
   'scripts/probe-entry.cjs', 'scripts/verify-ui.cjs', 'scripts/verify-workflow.cjs',
   'scripts/verify-cjk.cjs', 'scripts/verify-wizard.cjs',
   'shot-light.png', 'shot-dark.png', 'shot-workflows-light.png', 'shot-wizard.png'
