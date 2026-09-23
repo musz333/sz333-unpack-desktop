@@ -89,6 +89,22 @@ app.whenReady().then(async () => {
   // ---- 第 1 次：应生成卡片 ----
   await runExtract(p1, out1, '第1批');
   const after1 = await win.webContents.executeJavaScript('window.api.workflowList()');
+  // 诊断：直接看主进程算出的指纹与源文件集合
+  const diag = await win.webContents.executeJavaScript(`
+    (async () => {
+      const list = await window.api.workflowList();
+      return JSON.stringify(list.map(c => ({ anchor: c.anchorPassword, fp: c.fingerprint, prim: c.primVolSize, vol: c.volCount, chain: c.chain })));
+    })();
+  `);
+  console.log('[wf][诊断] 卡片指纹: ' + diag);
+  const filesDiag = await win.webContents.executeJavaScript(`
+    (async () => {
+      const p = ${JSON.stringify(p1)};
+      return JSON.stringify({ p1: p, exists: true });
+    })();
+  `);
+  void filesDiag;
+  console.log('[wf][诊断] 源包所在目录内容: ' + JSON.stringify(fs.readdirSync(path.dirname(p1))));
   console.log('[wf] 第1批后卡片数：' + after1.length);
   if (after1.length) {
     const c = after1[0];
