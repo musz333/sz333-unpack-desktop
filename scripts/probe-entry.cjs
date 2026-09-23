@@ -14,6 +14,10 @@ const path = require('node:path');
 require(path.join(__dirname, '..', 'out', 'main', 'index.js'));
 
 // 2) 探针：仅在传入 --probe 时启用
+if (process.argv.includes('--scan')) {
+  require('./verify-scan-dedup.cjs');
+}
+
 if (process.argv.includes('--wizard')) {
   require('./verify-wizard.cjs');
 }
