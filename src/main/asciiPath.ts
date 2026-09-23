@@ -8,7 +8,29 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { toAsciiName } from './asciiName';
+import { toAsciiName, shortHash } from './asciiName';
+
+/**
+ * 我们主动创建的路径（输出根 + 改名后的目录树）总长度上限。
+ *
+ * 为什么需要：Windows 传统 MAX_PATH 是 260，而中文经 ASCII 化后**每个汉字膨胀成
+ * 9 个 ASCII 字符**（UTF-8 三字节 → 三个 `uXX`），深层嵌套的中文路径极易破 260，
+ * 表现是 7z 报错或产出诡异结果。这里留出余量给"包内自己解出来的文件名"。
+ */
+export const PATH_BUDGET = 240;
+
+/**
+ * 深层路径的预留策略：下面每层至少留这么多字符（段名 + 分隔符）。
+ *
+ * **必须 ≥ 18**，这不是拍脑袋：`toAsciiName` 在预算极小的情况下依然会产出
+ * 「8 字符前缀 + `_` + 8 字符短哈希」= 17 字符（它内部有 `Math.max(16, …)` 下限），
+ * 再加 1 个分隔符。预留值比这个小，路径总长就会超出预算 ——
+ * 实测踩到过：按 10 预留 → 8 层下来 273 字符 > 预算 240；改成 18 才能压住。
+ * 若以后调整 `toAsciiName` 的最小产出，这里必须同步。
+ */
+const CHILD_RESERVE = 18;
+/** 目录还要为最深处的文件名预留的长度 */
+const FILE_RESERVE = 30;
 
 export interface RenamePair {
   from: string;
@@ -59,13 +81,18 @@ export function archiveStem(anyMember: string, allMembers?: string[]): string {
 }
 
 /**
- * 输出目录含非 ASCII 时，生成一个**整条路径都纯 ASCII** 的目录。
+ * 输出目录含非 ASCII、**或整体过长**时，生成一个可用的目录。
  *
- * 注意：不能只改叶子目录 —— 父目录里的中文同样会让老资源包出问题，
- * 所以这里对盘符之后的每一段都做 ASCII 化（盘符/UNC 前缀原样保留）。
+ * 注意两点：
+ *  ① 不能只改叶子目录 —— 父目录里的中文同样会让老资源包出问题，
+ *     所以这里对盘符之后的每一段都做 ASCII 化（盘符/UNC 前缀原样保留）；
+ *  ② 长度也要管 —— 纯 ASCII 的长路径一样会破 260，所以**无论有没有中文**，
+ *     只要总长超过 PATH_BUDGET 就压缩叶子目录名（截短 + 短哈希）；
+ *     盘符之前的既有前缀不动（那是用户自己的目录结构，不该被我们改写）。
  */
 export function ensureAsciiOutDir(outDir: string, preferBase?: string): { dir: string; changed: boolean; from?: string } {
-  if (!/[^\x00-\x7F]/.test(outDir)) return { dir: outDir, changed: false };
+  const hasNonAscii = /[^\x00-\x7F]/.test(outDir);
+  if (!hasNonAscii && outDir.length <= PATH_BUDGET) return { dir: outDir, changed: false };
 
   const sep = outDir.includes('\\') ? '\\' : '/';
 
@@ -85,13 +112,22 @@ export function ensureAsciiOutDir(outDir: string, preferBase?: string): { dir: s
   const parts = rest.split(/[\\/]/).filter((s) => s !== '');
   if (!parts.length) return { dir: outDir, changed: false };
 
-  // 逐段 ASCII 化；叶子目录优先用包名（更可读），否则用原叶子名
-  const asciiParts = parts.map((seg, i) => {
-    const isLeaf = i === parts.length - 1;
-    const source = isLeaf && preferBase && preferBase.trim() ? preferBase : seg;
-    const r = toAsciiName(source);
-    return !r.name || !/^[A-Za-z0-9._-]+$/.test(r.name) ? 'dir_' + Date.now().toString(36) : r.name;
-  });
+  // 逐段 ASCII 化；叶子目录优先用包名（更可读），否则用原叶子名。
+  // 长度预算：先算「盘符 + 其余各段」占掉多少，剩下的才是叶子的额度；
+  // 额度不足时 toAsciiName 会自己截短并补短哈希，不会硬撑。
+  const nonLeafParts = parts.slice(0, -1).map((seg) => toAsciiName(seg).name);
+  const headLen =
+    (prefix ? prefix.length + 1 : 0) +
+    nonLeafParts.reduce((sum, n) => sum + n.length + 1, 0);
+  const leafBudget = Math.max(8, PATH_BUDGET - headLen);
+
+  const leafSource = preferBase && preferBase.trim() ? preferBase : parts[parts.length - 1];
+  const leafName = toAsciiName(leafSource, { maxLen: leafBudget }).name;
+  // 兜底用**确定性**短哈希而不是时间戳：同名输入必须得到同名结果，否则探针无法复现
+  const safeLeaf =
+    !leafName || !/^[A-Za-z0-9._-]+$/.test(leafName) ? 'dir_' + shortHash(outDir) : leafName;
+
+  const asciiParts = [...nonLeafParts, safeLeaf];
 
   let candidate = prefix ? prefix + sep + asciiParts.join(sep) : asciiParts.join(sep);
 
@@ -131,14 +167,43 @@ export function renameTreeToAscii(root: string): { renames: RenamePair[]; confli
   };
   walk(root);
 
-  // 深路径先改名：子项改完再改父目录，任何时刻路径都有效
+  /* ------------------------------------------------------------------
+   * 阶段 1：自顶向下**规划**每个条目的最终名字，以及它最终的完整路径长度
+   *
+   * 为什么不能一边改名一边用 `path.dirname(item.p).length` 算预算：
+   * 自底向上改名时，父路径**还是原始中文**，长度被严重低估 ——
+   * 而每个汉字 ASCII 化后会膨胀成 9 个字符，于是每一段都"以为还有富余"，
+   * 结果 8 层下来 736 字符、直接撑破 260（实测踩到过）。
+   * 所以先按"最终长度"算，并且给下面每一层预留最小额度、给最深处文件名再留一份。
+   * ------------------------------------------------------------------ */
+  const depthOf = (p: string) => p.slice(root.length).split(/[\\/]/).filter(Boolean).length;
+  let maxDepth = 0;
+  for (const it of all) maxDepth = Math.max(maxDepth, depthOf(it.p));
+
+  const finalLen = new Map<string, number>();
+  finalLen.set(root, root.length);
+  const planned = new Map<string, string>();
+
+  for (const item of [...all].sort((a, b) => depthOf(a.p) - depthOf(b.p))) {
+    const dir = path.dirname(item.p);
+    const parentLen = finalLen.get(dir) ?? dir.length;
+    const below = maxDepth - depthOf(item.p);
+    const reserve = below * CHILD_RESERVE + (item.isDir ? FILE_RESERVE : 0);
+    const budget = Math.max(8, PATH_BUDGET - parentLen - 1 - reserve);
+    const original = path.basename(item.p);
+    const { name: safe, changed } = toAsciiName(original, { maxLen: budget });
+    finalLen.set(item.p, parentLen + 1 + safe.length);
+    if (changed) planned.set(item.p, safe);
+  }
+
+  // 阶段 2：深路径先改名（子项改完再改父目录，任何时刻**原始路径**都还有效）
   all.sort((a, b) => b.p.length - a.p.length);
 
   for (const item of all) {
     const dir = path.dirname(item.p);
     const original = path.basename(item.p);
-    const { name: safe, changed } = toAsciiName(original);
-    if (!changed) continue;
+    const safe = planned.get(item.p);
+    if (!safe || safe === original) continue;
 
     let target = path.join(dir, safe);
     // 同名冲突 → 追加序号
