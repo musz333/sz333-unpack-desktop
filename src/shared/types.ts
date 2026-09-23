@@ -117,6 +117,10 @@ export interface TaskRecord {
   error?: TaskError;
   /** 需要用户输入密码时回传，便于界面直接弹输入 */
   archivePath?: string;
+  /** 本次实际解开的层数（套娃层数）；单层包为 1 */
+  layerCount?: number;
+  /** 逐层日志：每层解出了什么、用了什么密码、清理了什么 */
+  layerLog?: string[];
 }
 
 /* ------------------------------ 设置 ------------------------------ */
@@ -156,6 +160,10 @@ export interface AppSettings {
   notifyOnFinish: boolean;
   autoOpenOutDir: boolean;
   rememberPasswords: boolean;
+  /** APK 过滤：解压产物里的 .apk 一律剔除（默认关，用户按需开） */
+  apkFilterEnabled: boolean;
+  /** 单个 apk 占整包解出体积达到此百分比 → 判定为 apk 壳，连整份产物一起删（默认 70） */
+  apkDropThreshold: number;
   /** 工作流页视图：卡片 / 列表 */
   wfView: 'card' | 'list';
   /** 已知密码列表（按尝试顺序） */
@@ -180,6 +188,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnFinish: true,
   autoOpenOutDir: false,
   rememberPasswords: false,
+  apkFilterEnabled: false,
+  apkDropThreshold: 70,
   wfView: 'card',
   firstRunDone: false,
   passwords: []
