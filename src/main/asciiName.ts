@@ -54,8 +54,9 @@ export function toAsciiName(name: string, opts: { fallback?: string; maxLen?: nu
   const original = name ?? '';
   if (original === '' ) return { name: opts.fallback ?? 'untitled', changed: false };
 
-  // 已经是纯 ASCII 且合法 → 原样返回
-  if (!hasNonAscii(original) && SAFE_RE.test(original)) {
+  // 已经是纯 ASCII、合法、且**没超长度预算** → 原样返回。
+  // maxLen 必须一起判：纯 ASCII 的超长名同样会撑破 MAX_PATH，得走下面的截短逻辑。
+  if (!hasNonAscii(original) && SAFE_RE.test(original) && original.length <= maxLen) {
     return { name: original, changed: false };
   }
 
