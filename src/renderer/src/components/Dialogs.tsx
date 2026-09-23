@@ -313,6 +313,38 @@ export function SettingsDialog({
             <ToggleRow label="完成后发送系统通知" checked={settings.notifyOnFinish} onChange={(v) => void patch({ notifyOnFinish: v })} />
           </Section>
 
+          {/* APK 过滤 */}
+          <Section title="APK 过滤" icon="package">
+            <ToggleRow
+              label="剔除解压出来的 .apk"
+              checked={settings.apkFilterEnabled}
+              onChange={(v) => void patch({ apkFilterEnabled: v })}
+            />
+            <p className="text-xs leading-5 text-fg-faint">
+              开启后，解压产物里的安卓安装包会被删除。若单个 apk 占整个包解出体积超过下面的比例，
+              判定这个包只是个 apk 外壳，连整份解压产物一起删掉（不影响源压缩包，源包去留由上面的「源文件处理」决定）。
+            </p>
+            <Field label="整包删除阈值">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={5}
+                  value={settings.apkDropThreshold}
+                  disabled={!settings.apkFilterEnabled}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n)) void patch({ apkDropThreshold: Math.max(1, Math.min(100, Math.round(n))) });
+                  }}
+                  className="mono-num h-9 w-24 rounded-btn border border-line bg-ink-0 px-2.5 text-sm disabled:text-fg-disabled transition-colors duration-150 ease-out hover:border-line-strong focus:border-brand"
+                  aria-label="APK 整包删除阈值（百分比）"
+                />
+                <span className="text-xs text-fg-muted">%（单个 apk 占整包达到此比例即删整包）</span>
+              </div>
+            </Field>
+          </Section>
+
           {/* 密码 */}
           <Section title="密码" icon="lock">
             <ToggleRow label="记住成功的密码（供下次自动尝试）" checked={settings.rememberPasswords} onChange={(v) => void patch({ rememberPasswords: v })} />
