@@ -48,6 +48,8 @@ interface State {
   applySystemTheme(dark: boolean): void;
 
   addPaths(paths: string[]): Promise<number>;
+  /** 对清单再做一次重复剔除（手动触发），返回剔除数量 */
+  dedupePacks(): number;
   clearPacks(): void;
   selectPack(id: string | null): void;
   loadArchive(id: string, password?: string): Promise<void>;
@@ -80,6 +82,55 @@ interface State {
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+
+/** 成功任务的自动收起定时器（避免重复挂号） */
+const collapseTimers = new Map<string, number>();
+
+/** 规范化包名（与主进程 dedup.ts 的同名函数保持完全一致） */
+function normalizeCopyName(name: string): string {
+  let s = name;
+  for (let i = 0; i < 5; i++) {
+    const before = s;
+    s = s.replace(/\.(part\d+|z\d{2}|r\d{2}|\d{3})$/i, '');
+    s = s.replace(/\.(7z|zip|rar|tar|gz|tgz|bz2|xz|cab)$/i, '');
+    if (s === before) break;
+  }
+  let prev = '';
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(/[\s_-]*[(（]\s*\d+\s*[)）]$/, '');
+    s = s.replace(/[\s_-]+(?:副本|复制|copy|copia)$/i, '');
+    s = s.replace(/[\s_-]+copy\d*$/i, '');
+    // 浏览器"另存为"产生的单位数后缀，如 foo_1 / foo-2（两位数以上视为不同包名，不动）
+    s = s.replace(/[_-]+[1-9]$/, '');
+  }
+  s = s.replace(/[\s_-]+$/, '');
+  return s.trim().toLowerCase();
+}
+
+/** 取该包的分卷大小签名：分卷数 + 逐分卷字节数（主进程已按文件名排序算好） */
+function volumeSignatureOf(p: PackItem): string {
+  const sizes = p.volumeSizes ?? [];
+  return `${p.files.length}:${sizes.join(',')}`;
+}
+
+function baseNameOf(p: PackItem): string {
+  const s = p.primary.split(/[\\/]/).pop() ?? p.primary;
+  return s.replace(/\.[^.]*$/, '');
+}
+
+/**
+ * 两份资源包是否"同一份内容"
+ *   ① 主分卷路径完全相同 → 是
+ *   ② 规范化名相同 + 分卷数相同 + **逐分卷大小完全一致** → 是
+ *   （只看 stat 就能拿到的信息，不读文件内容：几十 GB 的包算哈希代价不可接受）
+ */
+function isSamePack(a: PackItem, b: PackItem): boolean {
+  if (a.primary === b.primary) return true;
+  if (normalizeCopyName(baseNameOf(a)) !== normalizeCopyName(baseNameOf(b))) return false;
+  if (a.files.length !== b.files.length) return false;
+  return volumeSignatureOf(a) === volumeSignatureOf(b);
+}
 
 export const useStore = create<State>((set, get) => ({
   ready: false,
@@ -170,22 +221,87 @@ export const useStore = create<State>((set, get) => ({
 
   async addPaths(paths) {
     const incoming = await window.api.scanPacks(paths);
-    const existing = get().packs;
-    const merged = [...existing];
+    const merged = [...get().packs];
     let added = 0;
+    let mergedDup = 0;
+    const dupDetails: string[] = [];
+
     for (const p of incoming) {
-      const dup = merged.find((x) => x.primary === p.primary);
-      if (dup) continue;
+      const hit = merged.find((x) => isSamePack(x, p));
+      if (hit) {
+        // 与清单里已有的一份"同名 + 分卷大小一致" → 视为重复，合并到保留的那一份上
+        hit.mergedCount = (hit.mergedCount ?? 1) + 1;
+        hit.dupPaths = [...(hit.dupPaths ?? []), p.primary];
+        mergedDup += 1;
+        dupDetails.push(`${p.primary}  ←  与已添加的 ${hit.primary} 相同`);
+        continue;
+      }
       merged.push(p);
       added += 1;
     }
+
     set({ packs: merged });
     if (!get().selectedId && merged.length) {
       set({ selectedId: merged[0].id });
       void get().loadArchive(merged[0].id);
     }
-    if (added) get().toast('ok', `已添加 ${added} 个资源包`, undefined);
+
+    const count = mergedDup;
+    if (count > 0) {
+      if (get().settings.dupPolicy === 'ask') {
+        const keepDropped = window.confirm(
+          `检测到 ${count} 个重复包（同名且分卷大小完全一致），已自动剔除：\n\n` +
+            dupDetails.slice(0, 8).join('\n') +
+            (dupDetails.length > 8 ? `\n… 其余 ${dupDetails.length - 8} 条` : '') +
+            `\n\n点【确定】保持剔除；点【取消】把它们加回清单。`
+        );
+        if (!keepDropped) {
+          const back = await window.api.scanPacks(paths);
+          const cur = [...get().packs];
+          for (const p of back) {
+            if (!cur.some((x) => x.primary === p.primary)) cur.push(p);
+          }
+          set({ packs: cur });
+          get().toast('warn', '已把重复包加回清单', `共 ${count} 份，同一内容会出现多张卡片`);
+          return added;
+        }
+        get().toast('info', `已剔除 ${count} 个重复包`, '同名且分卷大小一致，清单中保留一份');
+      } else {
+        // silent（默认）
+        get().toast('info', `已剔除 ${count} 个重复包`, '同名且逐分卷大小一致，清单中保留一份');
+      }
+    } else if (added) {
+      get().toast('ok', `已添加 ${added} 个资源包`, undefined);
+    }
     return added;
+  },
+
+  dedupePacks() {
+    const packs = get().packs;
+    const kept: PackItem[] = [];
+    let dropped = 0;
+    const detail: string[] = [];
+
+    for (const p of packs) {
+      const hit = kept.find((x) => isSamePack(x, p));
+      if (hit) {
+        hit.mergedCount = (hit.mergedCount ?? 1) + 1;
+        hit.dupPaths = [...(hit.dupPaths ?? []), p.primary];
+        dropped += 1;
+        detail.push(`${p.primary}  ←  与 ${hit.primary} 相同`);
+        continue;
+      }
+      kept.push(p);
+    }
+
+    set({ packs: kept, selectedId: kept.some((k) => k.id === get().selectedId) ? get().selectedId : (kept[0]?.id ?? null) });
+    if (dropped > 0) {
+      const preview = detail.slice(0, 6).join('\n');
+      get().toast('ok', `已剔除 ${dropped} 个重复包`, preview || '同名且逐分卷大小一致');
+    } else {
+      get().toast('info', '没有发现重复包', '同名且分卷大小完全一致才会被判为重复');
+    }
+    return dropped;
   },
 
   clearPacks() {
@@ -300,17 +416,47 @@ export const useStore = create<State>((set, get) => ({
       const tasks = i >= 0 ? s.tasks.map((x) => (x.id === t.id ? t : x)) : [t, ...s.tasks];
       return { tasks };
     });
+
     if (t.status === 'needs-password') {
       set({ passwordFor: t.id, passwordError: null });
+    }
+
+    // 成功后自动收起（延时 8 秒，给用户点【打开】【定位】的窗口）
+    // 只处理 done：失败 / 取消 / 待密码 一律常驻，方便回来排查
+    if (t.status === 'done' && get().settings.autoCollapseDone === 'on') {
+      if (collapseTimers.has(t.id)) return;
+      const timer = window.setTimeout(() => {
+        collapseTimers.delete(t.id);
+        const cur = get().tasks.find((x) => x.id === t.id);
+        if (!cur || cur.status !== 'done') return;   // 期间被重试/移除则不动
+        set((s) => ({ tasks: s.tasks.filter((x) => x.id !== t.id) }));
+      }, 8000);
+      collapseTimers.set(t.id, timer);
+    }
+
+    // 若该任务被手动移除或状态变了，取消挂起的定时器
+    if (t.status !== 'done' && collapseTimers.has(t.id)) {
+      window.clearTimeout(collapseTimers.get(t.id)!);
+      collapseTimers.delete(t.id);
     }
   },
 
   removeTask(id) {
     void window.api.removeTask(id);
+    const timer = collapseTimers.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      collapseTimers.delete(id);
+    }
     set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
   },
 
   clearFinished() {
+    for (const [id, timer] of collapseTimers) {
+      window.clearTimeout(timer);
+      void id;
+    }
+    collapseTimers.clear();
     set((s) => ({
       tasks: s.tasks.filter((t) => !['done', 'failed', 'cancelled'].includes(t.status))
     }));
