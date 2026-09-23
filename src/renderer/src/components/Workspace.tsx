@@ -111,6 +111,26 @@ function PackRow({
               不可解压
             </Chip>
           ) : null}
+          {pack.mergedCount && pack.mergedCount > 1 ? (
+            <span
+              title={
+                (pack.dupReason ?? '同名且逐分卷大小一致') +
+                '\n\n已剔除的重复份：\n' +
+                (pack.dupPaths ?? []).join('\n')
+              }
+            >
+              <Chip tone="accent" icon="layers">
+                已合并 {pack.mergedCount} 份
+              </Chip>
+            </span>
+          ) : null}
+          {pack.conflictNote ? (
+            <span title={pack.conflictNote}>
+              <Chip tone="warn" icon="warn">
+                同名不同大小
+              </Chip>
+            </span>
+          ) : null}
         </div>
         <p className="mono-num mt-1 truncate text-xs text-fg-faint">
           {fmtSize(pack.size)} · {shortPath(pack.primary)}
@@ -133,9 +153,12 @@ export function PackList({ onAdd, onPick }: { onAdd: () => void; onPick: () => v
   const clearPacks = useStore((s) => s.clearPacks);
   const startExtract = useStore((s) => s.startExtract);
   const startExtractFromSelection = useStore((s) => s.startExtractFromSelection);
+  const dedupePacks = useStore((s) => s.dedupePacks);
   const [active, setActive] = useState(false);
 
   const total = packs.reduce((s, p) => s + p.size, 0);
+  /** 清单里被判定为"重复并被合并"的份数（合并前 - 1 之和） */
+  const dupCount = packs.reduce((s, p) => s + Math.max(0, (p.mergedCount ?? 1) - 1), 0);
 
   return (
     <div
@@ -166,14 +189,22 @@ export function PackList({ onAdd, onPick }: { onAdd: () => void; onPick: () => v
         <Button size="sm" icon="play" onClick={() => void startExtractFromSelection()}>
           解压选中
         </Button>
+        <Button
+          size="sm"
+          icon="layers"
+          disabled={dupCount === 0}
+          onClick={() => dedupePacks()}
+          title="按「同名 + 逐分卷大小完全一致」剔除重复包；只从清单移除，不会删除硬盘文件"
+        >
+          剔除重复包{dupCount > 0 ? `（${dupCount}）` : ''}
+        </Button>
         <Button size="sm" variant="ghost" icon="trash" onClick={clearPacks}>
           清空
         </Button>
         <span className="ml-auto inline-flex items-center gap-2">
-          <Chip>
-            {packs.length} 个资源包
-          </Chip>
+          <Chip>{packs.length} 个资源包</Chip>
           <Chip tone="accent">{fmtSize(total)}</Chip>
+          {dupCount > 0 ? <Chip tone="accent" icon="layers">已合并 {dupCount} 份重复</Chip> : null}
         </span>
       </div>
 
