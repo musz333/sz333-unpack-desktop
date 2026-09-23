@@ -164,7 +164,7 @@ export function QueuePanel() {
 
         {finished > 0 ? (
           <Button size="sm" variant="ghost" icon="trash" onClick={clearFinished} className="mt-auto">
-            清除已完成（{finished}）
+            清除失败/已取消（{finished}）
           </Button>
         ) : null}
       </div>
