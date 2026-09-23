@@ -1,7 +1,7 @@
 {
   "name": "sz333-unpack-desktop",
   "productName": "sz333 解压工具",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Windows 桌面解压工具：分卷合并 / 多层嵌套 / 加密包 / 密码锚点工作流 / 中文路径转英文",
   "author": {
     "name": "sz333",
