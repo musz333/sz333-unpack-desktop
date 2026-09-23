@@ -181,9 +181,14 @@ export class TaskManager extends EventEmitter {
      *  1) 先用锚点密码直接按链路解压（跳过探测与试错）
      *  2) 若锚点密码失效 → 记一次失误（密码错即刻停用），回退常规探测
      *  3) 解压成功后把本次链路存成卡片，或累计命中次数
+     *
+     * 注意：源文件集合与指纹必须在**解压开始前**采集。
+     *   源文件处理默认是"彻底删除"，解压成功后源包就没了；
+     *   若在解压后才采集，指纹会算成空值，导致工作流记录退化、同源再也匹配不上。
      * ============================================================ */
     const sourceFiles = collectSourceFiles(t.sourcePaths, src);
     const fingerprint = buildFingerprint(sourceFiles);
+    const primVolSize = sourceFiles[0] ? safeSize(sourceFiles[0]) : 0;
     const baseName = path.basename(src).replace(/\.[^.]+$/, '');
     const wfList = this.deps.workflows.list();
     const m = matchWorkflow(wfList, baseName, fingerprint, 0, 1, settings.passwords);
@@ -396,7 +401,7 @@ export class TaskManager extends EventEmitter {
       const fresh = buildFromResult({
         baseName,
         steps,
-        primVolSize: sourceFiles[0] ? safeSize(sourceFiles[0]) : 0,
+        primVolSize,
         files: sourceFiles
       });
       if (fresh) {
