@@ -36,6 +36,16 @@ export interface PackItem {
   formatLabel: string;
   extractable: boolean;
   note: string;
+  /** 批内去重：这份代表了几份（>1 表示合并了重复包） */
+  mergedCount?: number;
+  /** 去重依据 */
+  dupReason?: string;
+  /** 被剔除的重复份路径 */
+  dupPaths?: string[];
+  /** 同名但大小不同的提示 */
+  conflictNote?: string;
+  /** 逐分卷字节数（与 files 顺序一致），用于前端比对重复 */
+  volumeSizes?: number[];
 }
 
 /* ------------------------------ 压缩包内容（只读） ------------------------------ */
@@ -120,6 +130,12 @@ export type SourcePolicy = 'keep' | 'delete';
 /** 中文路径策略：auto = 仅在需要时自动转英文 / force = 始终转英文 / off = 保持原样 */
 export type NonAsciiPolicy = 'auto' | 'force' | 'off';
 
+/** 重复包策略：silent 无感直接剔除 / ask 每次询问 / off 不处理 */
+export type DupPolicy = 'silent' | 'ask' | 'off';
+
+/** 任务完成后是否自动收起（仅对成功任务生效） */
+export type AutoCollapsePolicy = 'on' | 'off';
+
 export interface AppSettings {
   theme: ThemeMode;
   language: 'zh-CN' | 'en-US';
@@ -132,6 +148,10 @@ export interface AppSettings {
   sourcePolicy: SourcePolicy;
   /** 中文路径策略：auto（默认，输出目录含中文时自动换英文目录并改包内中文名）/ force / off */
   nonAsciiPolicy: NonAsciiPolicy;
+  /** 重复包处理：默认无感直接剔除 */
+  dupPolicy: DupPolicy;
+  /** 成功任务完成后自动从队列收起（失败/取消/待密码的任务常驻） */
+  autoCollapseDone: AutoCollapsePolicy;
   maxConcurrent: 1 | 2 | 4;
   notifyOnFinish: boolean;
   autoOpenOutDir: boolean;
@@ -154,6 +174,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keepDirStructure: true,
   sourcePolicy: 'delete',
   nonAsciiPolicy: 'auto',
+  dupPolicy: 'silent',
+  autoCollapseDone: 'on',
   maxConcurrent: 1,
   notifyOnFinish: true,
   autoOpenOutDir: false,
