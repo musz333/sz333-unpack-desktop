@@ -66,6 +66,13 @@ export function sniffFile(filePath: string): SniffResult {
   return { format: 'unknown', via: 'none' };
 }
 
+/**
+ * 扩展名 → 格式的兜底映射（仅在魔数嗅探失败时使用）。
+ *
+ * `apk → zip` 本身是**正确**的（真实 APK 就是一个 zip），这个映射服务的是**主包识别**
+ * 与**伪装判定**；它**不再**意味着 apk 可以参与套娃递归 —— 层选择里 apk 一律被跳过
+ * （见 `pickNextLayer` 上方的「设计决定」）。别因为看到这个映射就把 apk 接回递归。
+ */
 function extToFormat(ext: string): ArchiveFormat {
   if (ext === 'zip' || ext === 'jar' || ext === 'apk') return 'zip';
   if (ext === '7z') return '7z';
@@ -103,21 +110,27 @@ export interface LayerCandidate {
   renameTo: string;
 }
 
-export interface PickNextLayerOptions {
-  /**
-   * 是否跳过 .apk（默认 false）。
-   *
-   * 为什么需要它：`.apk` 在 `extToFormat` 里是 zip 的别名（真实 APK 确实是 zip），
-   * 所以魔数嗅探失败时会**按扩展名兜底判成 zip**，于是被判为"可继续解压"。
-   * 后果：一个损坏的/伪造的 `.apk` 会被选作下一层去解，7z 打不开（返回码 2），
-   * **整个任务直接失败** —— 而此时用户恰恰开了「APK 过滤」，本意是要把这些
-   * apk 剔掉、根本不关心它们能不能解开。
-   *
-   * 所以：开启 APK 过滤时传 true，把 .apk 排除在递归候选之外，交给过滤器处理
-   * （过滤器会用 sniffFile 的魔数结果判断真实格式，不会误伤）。
-   */
-  skipApk?: boolean;
-}
+/**
+ * 【设计决定】`.apk` **一律**不作为递归候选，与「APK 过滤」开关**无关**。
+ *
+ * 为什么必须无条件跳过：
+ *   · `.apk` 在 `extToFormat` 里是 zip 的别名（真实 APK 确实是 zip），所以当魔数
+ *     嗅探失败时会**按扩展名兜底判成 zip**，从而被判为"可继续解压"。
+ *   · 后果：一个损坏的/伪造的 `.apk` 会被选作下一层去解，7z 打不开（返回码 2），
+ *     **整个任务直接失败**。
+ *   · 而 apk 是**终端产物，不是套娃外壳** —— 把它解开只会让
+ *     `AndroidManifest.xml` / `classes.dex` / `resources.arsc` 平铺到输出目录根，
+ *     和资源本身那几个小文件混在一起，产物反而更乱
+ *     （实测：资源包通常是「一个大 apk + 几个小文件」，不是纯 apk）。
+ *
+ * 职责划分（用户拍板，别再把两者接回同一个开关）：
+ *   · **层选择** —— 永不把 `.apk` 当嵌套层：本函数无条件跳过，不受任何设置影响。
+ *   · **删除与否** —— 是否剔掉产物里的 `.apk`、是否因占比过高删整份产物：完全由
+ *     设置 `apkFilterEnabled` / `apkDropThreshold` 控制（见 apkFilter.ts）。
+ *
+ * 边界：本函数只管"下一层"。用户**直接拖入**的 `.apk` 仍会照常解压 —— 那是用户
+ * 明确要的东西，走主包路径（engine.ts 的魔数识别），不经过这里。
+ */
 
 /**
  * 解压完成后，从输出目录里找出"下一层该解的那个压缩包"。
@@ -125,10 +138,11 @@ export interface PickNextLayerOptions {
  * 规则：
  *   - 只考虑顶层条目（递归子目录会让语义混乱，且目标资源通常都是平铺的）
  *   - 跳过已知的非压缩格式
+ *   - `.apk` 一律跳过（见上方「设计决定」）
  *   - 分卷只取主卷（同一套分卷只解一次）
  *   - 若有多个候选：优先魔数命中的；再优先"看起来像伪装"的（扩展名与真实格式不符）
  */
-export function pickNextLayer(outDir: string, opts: PickNextLayerOptions = {}): LayerCandidate | null {
+export function pickNextLayer(outDir: string): LayerCandidate | null {
   let entries: fs.Dirent[] = [];
   try {
     entries = fs.readdirSync(outDir, { withFileTypes: true });
@@ -145,8 +159,8 @@ export function pickNextLayer(outDir: string, opts: PickNextLayerOptions = {}): 
     // 跳过临时/残留文件
     if (/\.(tmp|part|!ut|downloading)$/i.test(e.name)) continue;
 
-    // 开启 APK 过滤时，.apk 不作为递归候选（见 PickNextLayerOptions.skipApk 说明）
-    if (opts.skipApk && /\.apk$/i.test(e.name)) continue;
+    // .apk 一律不作为递归候选（无条件，见本文件顶部「设计决定」）
+    if (/\.apk$/i.test(e.name)) continue;
 
     const sniffed = sniffFile(full);
     if (!canExtract(sniffed.format)) continue;
