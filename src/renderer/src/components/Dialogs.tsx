@@ -428,7 +428,7 @@ function AboutBlock() {
           title={'打开 ' + (info?.githubUrl ?? '')}
         >
           <Icon name="github" size={16} />
-          {repo || 'github.com/muszz333/sz333-unpack-desktop'}
+          {repo || 'github.com/musz333/sz333-unpack-desktop'}
           <Icon name="external" size={16} />
         </button>
       </div>
