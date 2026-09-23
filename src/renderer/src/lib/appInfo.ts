@@ -2,4 +2,4 @@
 export const GITHUB_URL = 'https://github.com/muszz333/sz333-unpack-desktop';
 export const GITHUB_REPO = 'muszz333/sz333-unpack-desktop';
 export const APP_NAME = 'sz333 解压工具';
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.0.4';
