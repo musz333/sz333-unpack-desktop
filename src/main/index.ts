@@ -320,7 +320,13 @@ function registerIpc() {
       format: p.format,
       formatLabel: p.formatLabel,
       extractable: p.extractable,
-      note: p.note
+      note: p.note,
+      // 去重相关信息必须一并带出，否则渲染层拿不到"合并了几份/依据/被剔除的路径/冲突提示"
+      volumeSizes: p.volumeSizes,
+      mergedCount: p.mergedCount,
+      dupReason: p.dupReason,
+      dupPaths: p.dupPaths,
+      conflictNote: p.conflictNote
     }));
   });
 
