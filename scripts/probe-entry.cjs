@@ -30,6 +30,10 @@ if (process.argv.includes('--wf')) {
   require('./verify-workflow.cjs');
 }
 
+if (process.argv.includes('--layers')) {
+  require('./verify-layers.cjs');
+}
+
 if (process.argv.includes('--probe')) {
   require('./verify-ui.cjs');
 }
