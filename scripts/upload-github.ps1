@@ -109,7 +109,8 @@ $include = @(
   'scripts/build.bat', 'scripts/make-icon.mjs', 'scripts/upload-github.ps1', 'scripts/publish-release.ps1',
   'scripts/probe-entry.cjs', 'scripts/verify-ui.cjs', 'scripts/verify-workflow.cjs',
   'scripts/verify-cjk.cjs', 'scripts/verify-wizard.cjs',
-  'scripts/verify-dedup.mjs', 'scripts/verify-scan-dedup.cjs',
+  'scripts/verify-dedup.mjs', 'scripts/verify-scan-dedup.cjs', 'scripts/verify-layers.cjs',
+  'scripts/make-e2e-corpus.ps1', 'scripts/make-workflow-corpus.ps1', 'scripts/build-release.ps1',
   'shot-light.png', 'shot-dark.png', 'shot-workflows-light.png', 'shot-wizard.png'
 )
 $srcFiles = Get-ChildItem (Join-Path $base 'src') -Recurse -File | ForEach-Object {
