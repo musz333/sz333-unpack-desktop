@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { ArchiveFormat, ArchiveInfo, ArchiveEntry } from '@shared/types';
 import { FORMATS } from '@shared/types';
+import { findDuplicates } from './dedup';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,6 +105,16 @@ export interface ScannedPack {
   formatLabel: string;
   extractable: boolean;
   note: string;
+  /** 批内去重：被合并掉的重复份数（>1 表示这份代表了几份） */
+  mergedCount?: number;
+  /** 去重依据（界面提示用） */
+  dupReason?: string;
+  /** 被剔除的那些份的路径（界面可展开查看） */
+  dupPaths?: string[];
+  /** 同名但大小不同时的提示 */
+  conflictNote?: string;
+  /** 逐分卷字节数（与 files 顺序一致） */
+  volumeSizes?: number[];
 }
 
 export function scanPaths(inputs: string[]): ScannedPack[] {
@@ -124,9 +135,15 @@ export function scanPaths(inputs: string[]): ScannedPack[] {
     }
   }
 
+  // 分组键 = 所在目录 + 分卷基名
+  //   v1.0.2 修正：原先只用「文件基名」，导致不同目录下的同名包
+  //   （如 D:\下载\RX.rar 与 D:\备份\RX.rar）被错误合并成一组，
+  //   其中一个会被 pickPrimary 静默忽略 —— 该解的包可能根本没解。
   const groups = new Map<string, string[]>();
   for (const f of files) {
-    const key = volumeKey(path.basename(f)) || path.basename(f);
+    const dir = path.dirname(f);
+    const base = volumeKey(path.basename(f)) || path.basename(f);
+    const key = dir + '\u0000' + base;
     const arr = groups.get(key) ?? [];
     arr.push(f);
     groups.set(key, arr);
@@ -161,6 +178,8 @@ export function scanPaths(inputs: string[]): ScannedPack[] {
       kind: members.length > 1 ? 'multi' : 'single',
       baseName: path.basename(members[0]).replace(/\.[^.]+$/, ''),
       files: members.sort(),
+      /** 逐分卷字节数（按文件名排序后，与 files 顺序一致）——用于前端比对重复 */
+      volumeSizes: members.map((f) => safeStatSize(f)),
       primary,
       size,
       format,
@@ -169,7 +188,50 @@ export function scanPaths(inputs: string[]): ScannedPack[] {
       note: meta.note ?? ''
     });
   }
+
+  // 批内去重：同名同大小（含逐分卷大小一致）只保留一份
+  const dedup = findDuplicates(
+    packs.map((p) => ({
+      id: p.id,
+      primary: p.primary,
+      files: p.files,
+      size: p.size,
+      name: path.basename(p.primary)
+    })),
+    safeStatSize
+  );
+  if (dedup.droppedIds.length || dedup.conflicts.length) {
+    const dropSet = new Set(dedup.droppedIds);
+    const kept = packs.filter((p) => !dropSet.has(p.id));
+
+    // 把"被合并了几份"记录到保留的那一份上，界面可展示
+    for (const g of dedup.groups) {
+      const keepPack = kept.find((p) => p.id === g.keep);
+      if (keepPack) {
+        keepPack.mergedCount = (keepPack.mergedCount ?? 1) + g.drop.length;
+        keepPack.dupReason = g.reason;
+        keepPack.dupPaths = g.drop
+          .map((id) => packs.find((p) => p.id === id)?.primary)
+          .filter((x): x is string => !!x);
+      }
+    }
+    for (const c of dedup.conflicts) {
+      for (const id of c.ids) {
+        const p = kept.find((x) => x.id === id);
+        if (p) p.conflictNote = '同名但大小不同，已保留两份';
+      }
+    }
+    return kept;
+  }
   return packs;
+}
+
+function safeStatSize(p: string): number {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
 }
 
 /* ------------------------------------------------------------------ *
