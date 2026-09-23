@@ -247,6 +247,49 @@ export function SettingsDialog({
             />
           </Section>
 
+          {/* 重复包 */}
+          <Section title="重复包处理" icon="layers">
+            <p className="text-xs leading-5 text-fg-faint">
+              判定依据：同名 + 逐分卷大小完全一致（只看文件大小，不读内容 —— 几十 GB 的包算哈希太慢）。
+              剔除只作用于待处理清单，不会删除硬盘上的文件；带「(1)」这类复制后缀的会被识别为同一份。
+            </p>
+            <PolicyRadio
+              checked={settings.dupPolicy === 'silent'}
+              onClick={() => void patch({ dupPolicy: 'silent' })}
+              title="无感直接剔除（默认）"
+              desc="拖入时发现重复包立即只保留一份，仅用一条提示告知。"
+            />
+            <PolicyRadio
+              checked={settings.dupPolicy === 'ask'}
+              onClick={() => void patch({ dupPolicy: 'ask' })}
+              title="每次询问"
+              desc="剔除前弹窗列出重复项，可一键把它们加回清单。"
+              tone="warn"
+            />
+            <PolicyRadio
+              checked={settings.dupPolicy === 'off'}
+              onClick={() => void patch({ dupPolicy: 'off' })}
+              title="不自动处理"
+              desc="全部保留，需要时在解压页点【剔除重复包】手动清理。"
+            />
+          </Section>
+
+          {/* 任务队列 */}
+          <Section title="任务队列" icon="activity">
+            <PolicyRadio
+              checked={settings.autoCollapseDone === 'on'}
+              onClick={() => void patch({ autoCollapseDone: 'on' })}
+              title="成功任务完成后自动收起（默认）"
+              desc="完成后停留 8 秒再从队列移出，方便你点【打开】【定位】；失败、取消、待输入密码的任务一直保留，便于排查。"
+            />
+            <PolicyRadio
+              checked={settings.autoCollapseDone === 'off'}
+              onClick={() => void patch({ autoCollapseDone: 'off' })}
+              title="不自动收起"
+              desc="所有任务卡都留在队列里，由你手动清除。"
+            />
+          </Section>
+
           {/* 性能与行为 */}
           <Section title="性能与行为" icon="gauge">
             <Field label="同时处理任务数">
