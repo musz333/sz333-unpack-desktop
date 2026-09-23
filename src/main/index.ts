@@ -524,7 +524,7 @@ function registerIpc() {
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     electron: process.versions.electron,
-    githubUrl: 'https://github.com/muszz333/sz333-unpack-desktop',
+    githubUrl: 'https://github.com/musz333/sz333-unpack-desktop',
     configDir: userDataDir(),
     packaged: app.isPackaged
   }));
@@ -632,7 +632,7 @@ app.whenReady().then(() => {
         label: '帮助',
         submenu: [
           { label: '打开配置目录', click: () => void shell.openPath(userDataDir()) },
-          { label: '开源地址', click: () => void shell.openExternal('https://github.com/muszz333/sz333-unpack-desktop') }
+          { label: '开源地址', click: () => void shell.openExternal('https://github.com/musz333/sz333-unpack-desktop') }
         ]
       }
     ])
