@@ -62,6 +62,13 @@ function sniffByExt(name: string): ArchiveFormat {
   return 'unknown';
 }
 
+/** 7z 能继续解压的格式集合（递归解压时判断"这一层还能不能再往下解"） */
+export function extractableFormats(): ArchiveFormat[] {
+  return (Object.keys(FORMATS) as ArchiveFormat[]).filter(
+    (f) => f !== 'unknown' && FORMATS[f].extractable
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * 分卷归组：partN / .NNN / .zNN / .rNN 都识别为同一组
  * ------------------------------------------------------------------ */
