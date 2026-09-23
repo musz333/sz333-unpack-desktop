@@ -356,7 +356,7 @@ export class TaskManager extends EventEmitter {
      * 三级回退去找，找到才续解。
      * ------------------------------------------------------------ */
     let layerOffset = 0;
-    const resumeTarget = locateResumeTarget(t.resumeFrom, outDir, settings.apkFilterEnabled);
+    const resumeTarget = locateResumeTarget(t.resumeFrom, outDir);
     if (resumeTarget) {
       currentInput = resumeTarget;
       // 层号以"已经完成的步数"为准：它和 steps 是同一个尺度，
@@ -453,18 +453,35 @@ export class TaskManager extends EventEmitter {
         ];
 
         let lastFile: string | undefined;
+        /**
+         * 进度节流。
+         *
+         * 7z `-bsp1` 会频繁输出百分比行，而每行都会 `patch()` 一次，把**整个 task 对象**
+         * 序列化后过 IPC 发给渲染进程。十万级文件的包会打出十万条消息，把渲染进程压死
+         * （界面卡住、进度条反而更卡）。
+         *
+         * 策略：**百分比变化立刻发**（进度条必须跟手），百分比不变时最多每 300ms 发一次
+         * （只为刷新"当前文件"，纯节流不损失可用信息）。
+         */
+        let lastEmitAt = 0;
+        let lastEmitPercent = -1;
         const runner = run7z({
           args,
           signal: abort.signal,
           onStdout: (chunk) => {
             const p = parsePercent(chunk);
-            if (p) {
-              if (p.current) lastFile = p.current;
-              this.patch(t.id, {
-                progress: p.percent,
-                currentFile: `${layerLabel}${p.percent}%${lastFile ? ' · ' + lastFile : ''}`
-              });
-            }
+            if (!p) return;
+            if (p.current) lastFile = p.current;
+
+            const now = Date.now();
+            if (p.percent === lastEmitPercent && now - lastEmitAt < 300) return;
+            lastEmitAt = now;
+            lastEmitPercent = p.percent;
+
+            this.patch(t.id, {
+              progress: p.percent,
+              currentFile: `${layerLabel}${p.percent}%${lastFile ? ' · ' + lastFile : ''}`
+            });
           }
         });
         this.running.set(t.id, runner);
@@ -572,10 +589,10 @@ export class TaskManager extends EventEmitter {
       }
 
       // ---- 从本层产物里找下一层：魔数识别为主，卡片链路优先 ----
-      // 注意 skipApk：开启 APK 过滤时不要把 .apk 当下一层去解 ——
-      // .apk 在扩展名兜底里被当成 zip，损坏的 apk 会让 7z 报错、整个任务失败，
-      // 而用户的意图正是把这些 apk 剔掉（详见 recursive.ts 的 skipApk 说明）。
-      const next = pickNextLayer(layerDir, { skipApk: settings.apkFilterEnabled });
+      // .apk 一律不会被选作下一层（见 recursive.ts 顶部「设计决定」）：
+      // 它是终端产物不是套娃外壳，且损坏的 apk 会被扩展名兜底误判成 zip 而让整任务失败。
+      // 是否**删除** apk 由设置 apkFilterEnabled 单独控制 —— 两件事已解耦。
+      const next = pickNextLayer(layerDir);
 
       // ---- 记这一层的链路（是否伪装、真实格式）----
       // 用绝对层号写入：续解时 layer 从 layerOffset 开始，steps 也必须从同一位置写，
@@ -776,7 +793,7 @@ export class TaskManager extends EventEmitter {
        * 而文件实际在根目录 → 续解定位不到 → 表现为"输入密码后还是不动"。
        * 所以这里必须解析出文件的**当前位置**再上报。
        * ------------------------------------------------------------ */
-      const resolved = locateResumeTarget(failedInput, outDir, settings.apkFilterEnabled);
+      const resolved = locateResumeTarget(failedInput, outDir);
       const deepArchive = resolved ?? failedInput;
       const doneLayers = doneLayerCount;
       const detail = `已解开前 ${doneLayers} 层，第 ${doneLayers + 1} 层（${path.basename(deepArchive)}）无法打开`;
@@ -1183,11 +1200,7 @@ function safeSize(p: string): number {
  *  ② 输出目录根下有没有同名文件（可能被 ASCII 改名或加了 _2 序号 → 模糊匹配）
  *  ③ 输出目录里再嗅探一遍，挑出可继续解压的包
  */
-function locateResumeTarget(
-  resumeFrom: string | undefined,
-  outDir: string,
-  skipApk = false
-): string | null {
+function locateResumeTarget(resumeFrom: string | undefined, outDir: string): string | null {
   if (!resumeFrom) return null;
 
   // ① 原路径
@@ -1214,7 +1227,7 @@ function locateResumeTarget(
   if (fuzzy) return path.join(outDir, fuzzy.name);
 
   // ③ 兜底：再嗅探一次，挑一个能继续解压的
-  const guess = pickNextLayer(outDir, { skipApk });
+  const guess = pickNextLayer(outDir);
   return guess ? guess.file : null;
 }
 
