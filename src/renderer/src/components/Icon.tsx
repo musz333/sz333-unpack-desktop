@@ -1,6 +1,5 @@
 import {
   Package,
-  Archive,
   FolderArchive,
   FileArchive,
   Upload,
@@ -8,15 +7,13 @@ import {
   FolderPlus,
   FolderOpen,
   Play,
+  PlayCircle,
   Pause,
-  Square,
   Trash2,
   Plus,
-  Minus,
   X,
   Check,
   CheckCircle2,
-  TriangleAlert,
   AlertTriangle,
   CircleAlert,
   Info,
@@ -30,7 +27,6 @@ import {
   List,
   Inbox,
   MousePointerClick,
-  ShieldCheck,
   HardDrive,
   Layers,
   Gauge,
@@ -38,26 +34,23 @@ import {
   Loader,
   File,
   Eye,
+  EyeOff,
   RotateCcw,
   Lock,
   Unlock,
   ExternalLink,
-  Timer,
-  ArrowUpRight,
-  ChevronDown,
   ChevronRight,
   Search,
-  Copy,
   Github
 } from 'lucide-react';
 
 /**
  * 唯一图标来源：全部取自 Lucide，统一 stroke-width = 1.5
- * 语义别名集中在此，禁止在组件里直接换用其它图标库
+ * 语义别名集中在此，禁止在组件里直接换用其它图标库。
+ * 只保留实际被引用的图标（未引用的别名已清理，避免死代码堆积）。
  */
 const MAP = {
   package: Package,
-  archive: Archive,
   'folder-archive': FolderArchive,
   'file-archive': FileArchive,
   upload: Upload,
@@ -65,15 +58,13 @@ const MAP = {
   'folder-plus': FolderPlus,
   'folder-open': FolderOpen,
   play: Play,
+  'play-circle': PlayCircle,
   pause: Pause,
-  stop: Square,
   trash: Trash2,
   plus: Plus,
-  minus: Minus,
   close: X,
   check: Check,
   'check-circle': CheckCircle2,
-  alert: TriangleAlert,
   warn: AlertTriangle,
   error: CircleAlert,
   info: Info,
@@ -87,7 +78,6 @@ const MAP = {
   list: List,
   inbox: Inbox,
   select: MousePointerClick,
-  shield: ShieldCheck,
   disk: HardDrive,
   layers: Layers,
   gauge: Gauge,
@@ -95,16 +85,13 @@ const MAP = {
   loader: Loader,
   file: File,
   eye: Eye,
+  'eye-off': EyeOff,
   retry: RotateCcw,
   lock: Lock,
   unlock: Unlock,
   external: ExternalLink,
-  timer: Timer,
-  'arrow-up-right': ArrowUpRight,
-  'chevron-down': ChevronDown,
   'chevron-right': ChevronRight,
   search: Search,
-  copy: Copy,
   github: Github
 } as const;
 

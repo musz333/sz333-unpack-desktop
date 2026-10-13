@@ -13,12 +13,16 @@ export default {
         },
         line: {
           DEFAULT: 'rgb(var(--c-border) / <alpha-value>)',
-          strong: 'rgb(var(--c-border-strong) / <alpha-value>)'
+          strong: 'rgb(var(--c-border-strong) / <alpha-value>)',
+          // hover 档：原代码 hover 时从 border 直跳 border-strong，缺中间过渡
+          hover: 'rgb(var(--c-border-hover) / <alpha-value>)'
         },
         fg: {
           DEFAULT: 'rgb(var(--c-text) / <alpha-value>)',
           muted: 'rgb(var(--c-text-2) / <alpha-value>)',
-          faint: 'rgb(var(--c-text-3) / <alpha-value>)'
+          faint: 'rgb(var(--c-text-3) / <alpha-value>)',
+          // 禁用态文本：原代码使用 text-fg-disabled，但此档从未定义导致类不生成
+          disabled: 'rgb(var(--c-text-3) / <alpha-value>)'
         },
         // 唯一强调色（品牌青绿）
         brand: {
@@ -27,6 +31,8 @@ export default {
           soft: 'rgb(var(--c-accent-soft) / <alpha-value>)',
           line: 'rgb(var(--c-accent-border) / <alpha-value>)'
         },
+        // 强调色上的前景色（浅=白 / 深=近黑），主按钮、品牌标、徽章等必须用它而非 text-white
+        'on-accent': 'rgb(var(--c-on-accent) / <alpha-value>)',
         // 语义色：仅成功 / 警告 / 错误
         ok: { DEFAULT: 'rgb(var(--c-ok) / <alpha-value>)', soft: 'rgb(var(--c-ok-soft) / <alpha-value>)' },
         warn: { DEFAULT: 'rgb(var(--c-warn) / <alpha-value>)', soft: 'rgb(var(--c-warn-soft) / <alpha-value>)' },
@@ -62,9 +68,10 @@ export default {
         panel: '12px'
       },
       boxShadow: {
-        // 仅浮层 / 下拉 / Toast 使用，且极淡
-        pop: '0 6px 16px rgb(0 0 0 / 0.06), 0 2px 4px rgb(0 0 0 / 0.04)',
-        toast: '0 10px 30px rgb(0 0 0 / 0.10)'
+        // 仅浮层 / 下拉 / Toast 使用，且极淡。
+        // 通过 CSS 变量取值，使深色主题能单独加深（原先写死浅色值，深色下阴影几乎不可见）。
+        pop: 'var(--c-shadow-pop)',
+        toast: 'var(--c-shadow-toast)'
       },
       transitionTimingFunction: {
         out: 'cubic-bezier(0.22, 0.61, 0.36, 1)'
@@ -77,11 +84,15 @@ export default {
       keyframes: {
         'fade-up': { from: { opacity: '0', transform: 'translateY(4px)' }, to: { opacity: '1', transform: 'none' } },
         'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },
+        // 不确定进度条的脉动：原代码用 style={{ animation: 'pulse ...' }} 引用，
+        // 但 keyframes 里从未定义 pulse，导致动画静默失效。
+        pulse: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0.45' } },
         shake: { '10%,90%': { transform: 'translateX(-1px)' }, '20%,80%': { transform: 'translateX(2px)' }, '30%,50%,70%': { transform: 'translateX(-3px)' }, '40%,60%': { transform: 'translateX(3px)' } }
       },
       animation: {
         'fade-up': 'fade-up 180ms cubic-bezier(0.22,0.61,0.36,1) both',
         'fade-in': 'fade-in 150ms ease-out both',
+        pulse: 'pulse 1.4s ease-in-out infinite',
         shake: 'shake 320ms ease-out'
       }
     }

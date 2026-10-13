@@ -16,6 +16,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { logger } from './logger';
+import { fmtBytes } from '@shared/bytes';
 
 export interface ApkFilterResult {
   /** 被删掉的 apk 文件数 */
@@ -37,60 +39,53 @@ interface ApkEntry {
   size: number;
 }
 
-/** 递归收集目录下所有 .apk 文件 */
-function collectApks(root: string): ApkEntry[] {
-  const out: ApkEntry[] = [];
-  const walk = (d: string): void => {
+/**
+ * 单遍遍历：同时收集 .apk 列表与目录总字节数。
+ *
+ * 修复 P1-5：旧实现是 `collectApks()` + `totalBytes()` **各自完整遍历一遍**，
+ * 对十万级条目的产物目录等于双倍开销。这里合并为一次遍历。
+ */
+async function scanTree(root: string): Promise<{ apks: ApkEntry[]; total: number }> {
+  const apks: ApkEntry[] = [];
+  let total = 0;
+  // 修复 ②：改用 fs.promises —— 十万级产物的目录同步递归会冻结主进程事件循环
+  // （同项目 dirStats 已异步化，这里保持口径一致）。
+  const walk = async (d: string): Promise<void> => {
     let entries: fs.Dirent[] = [];
     try {
-      entries = fs.readdirSync(d, { withFileTypes: true });
-    } catch {
+      entries = await fs.promises.readdir(d, { withFileTypes: true });
+    } catch (e) {
+      logger.debug(`读取目录失败（跳过）：${d} -> ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     for (const e of entries) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) {
-        walk(p);
+        await walk(p);
         continue;
       }
-      if (!/\.apk$/i.test(e.name)) continue;
       let size = 0;
       try {
-        size = fs.statSync(p).size;
+        size = (await fs.promises.stat(p)).size;
       } catch {
-        /* 取不到大小按 0 算，仍然会被剔除 */
+        /* 取不到大小按 0 算，apk 仍然会被剔除 */
       }
-      out.push({ file: p, size });
+      total += size;
+      if (/\.apk$/i.test(e.name)) apks.push({ file: p, size });
     }
   };
-  walk(root);
-  return out;
+  await walk(root);
+  return { apks, total };
 }
 
-/** 目录总字节数 */
-function totalBytes(root: string): number {
-  let total = 0;
-  const walk = (d: string): void => {
-    let entries: fs.Dirent[] = [];
-    try {
-      entries = fs.readdirSync(d, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else {
-        try {
-          total += fs.statSync(p).size;
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  };
-  walk(root);
-  return total;
+export interface ApkFilterOptions {
+  /**
+   * 是否允许"删除整份产物"。
+   *   · 未指定 / true → 允许（默认，保持既有行为：自建目录可以整包删）
+   *   · false         → 禁止递归删除目录，降级为"仅剔除 apk"
+   *                     （用于**用户指定的输出目录**，见修复 P1-6）
+   */
+  allowDropWholeDir?: boolean;
 }
 
 /**
@@ -98,9 +93,11 @@ function totalBytes(root: string): number {
  *
  * @param outDir     解压产物目录
  * @param threshold  占比阈值（百分比，0-100）。单个 apk 占比 ≥ 此值 → 删整包
+ * @param opts       allowDropWholeDir：是否允许删除整份产物（用户指定目录应传 false）
  * @returns          处理结果（含给用户看的说明行）
  */
-export function filterApks(outDir: string, threshold = 70): ApkFilterResult {
+export async function filterApks(outDir: string, threshold = 70, opts: ApkFilterOptions = {}): Promise<ApkFilterResult> {
+  const allowDropWholeDir = opts.allowDropWholeDir !== false;
   const res: ApkFilterResult = {
     apkRemoved: 0,
     apkBytes: 0,
@@ -112,11 +109,12 @@ export function filterApks(outDir: string, threshold = 70): ApkFilterResult {
 
   if (!fs.existsSync(outDir)) return res;
 
-  const apks = collectApks(outDir);
+  const scan = await scanTree(outDir);
+  const apks = scan.apks;
   if (!apks.length) return res;
 
   // 占比基准用"剔除前"的总量，这样"这个包是不是个 apk 壳"才判得准
-  const before = totalBytes(outDir);
+  const before = scan.total;
 
   // 找出最大的那个 apk，判断它是不是占了整包的绝对大头
   const biggest = apks.reduce((a, b) => (b.size > a.size ? b : a), apks[0]);
@@ -124,7 +122,7 @@ export function filterApks(outDir: string, threshold = 70): ApkFilterResult {
 
   const safeThreshold = Math.max(1, Math.min(100, threshold));
 
-  if (ratio >= safeThreshold) {
+  if (ratio >= safeThreshold && allowDropWholeDir) {
     // 整包就是个 apk 壳 → 连产物一起删
     res.dropRatio = ratio;
     res.dropApk = path.basename(biggest.file);
@@ -136,37 +134,40 @@ export function filterApks(outDir: string, threshold = 70): ApkFilterResult {
         ` → 判定为 apk 壳，已删除整份解压产物`
     );
     try {
-      fs.rmSync(outDir, { recursive: true, force: true });
-      fs.mkdirSync(outDir, { recursive: true });
-    } catch {
-      /* 删不掉就保留，用户至少还能看到内容 */
+      await fs.promises.rm(outDir, { recursive: true, force: true });
+      await fs.promises.mkdir(outDir, { recursive: true });
+    } catch (e) {
+      logger.warn(`APK 整包删除失败（产物已保留）：${e instanceof Error ? e.message : String(e)}`);
     }
     return res;
+  }
+
+  /* 达到阈值但**不允许删整目录**（用户指定目录）→ 降级为仅剔除 apk，并如实说明。
+   * 修复 P1-6：旧实现无论 outDir 来自哪里都直接 `rmSync(outDir, {recursive:true})`，
+   * 当 outDir 是用户自己的目录时会把目录里的**无关文件一并删掉**。 */
+  if (ratio >= safeThreshold && !allowDropWholeDir) {
+    res.log.push(
+      `APK 过滤：${path.basename(biggest.file)} 占整包 ${ratio.toFixed(1)}%（阈值 ${safeThreshold}%），` +
+        `但输出目录是你指定的目录，已跳过「删除整份产物」（仅剔除 apk，其余内容保留）`
+    );
   }
 
   // 只是顺带剔掉 apk，其他内容原样保留
   for (const a of apks) {
     try {
-      fs.rmSync(a.file, { force: true });
+      await fs.promises.rm(a.file, { force: true });
       res.apkRemoved += 1;
       res.apkBytes += a.size;
-    } catch {
-      /* 被占用就跳过 */
+    } catch (e) {
+      logger.warn(`剔除 apk 失败（已跳过）：${a.file} -> ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   if (res.apkRemoved > 0) {
     res.log.push(
-      `APK 过滤：剔除 ${res.apkRemoved} 个 apk（共 ${formatBytes(res.apkBytes)}）` +
+      `APK 过滤：剔除 ${res.apkRemoved} 个 apk（共 ${fmtBytes(res.apkBytes)}）` +
         `，最大一个占整包 ${ratio.toFixed(1)}%（未达 ${safeThreshold}% 阈值，其余内容保留）`
     );
   }
   return res;
-}
-
-function formatBytes(b: number): string {
-  if (b < 1024) return `${b} B`;
-  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
-  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
-  return `${(b / 1073741824).toFixed(2)} GB`;
 }

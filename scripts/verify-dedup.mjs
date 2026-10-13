@@ -44,7 +44,7 @@ esbuild.buildSync({
 const dedup = require(outFile);
 execFileSync(process.execPath, ['-e', '0']); // 确保 require 生效顺序
 
-const { findDuplicates, findCrossBatchDuplicates, normalizeCopyName } = dedup;
+const { findDuplicates, normalizeCopyName } = dedup;
 
 /* ---------- 2) 临时文件工具 ---------- */
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'v19dedup-'));
@@ -136,13 +136,18 @@ try {
     const cases = [
       ['RX-4114 (1).rar', 'rx-4114'],
       ['RX-4114（2）.rar', 'rx-4114'],
-      ['RX-4114_1.rar', 'rx-4114'],
+      // 修复 ①：单数字后缀**不再**被当成"另存副本"剥离 —— 它更可能是不同的分集/序号
+      ['RX-4114_1.rar', 'rx-4114_1'],
       ['RX-4114 - 副本.rar', 'rx-4114'],
       ['RX-4114 copy.rar', 'rx-4114'],
       ['素材归档 (3).7z', '素材归档'],
       ['A-B (1).part1.7z', 'a-b'],
       ['A-B.part1.7z', 'a-b'],
-      ['RX-4114_10.rar', 'rx-4114_10']   // 两位数后缀视为不同包名，不归一
+      ['RX-4114_10.rar', 'rx-4114_10'],
+      ['video_1.rar', 'video_1'],
+      ['video_2.rar', 'video_2'],
+      ['episode-1.rar', 'episode-1'],
+      ['episode-2.rar', 'episode-2']
     ];
     for (const [input, expect] of cases) {
       const got = normalizeCopyName(input);
@@ -152,16 +157,18 @@ try {
 
   /* ================= D5 ================= */
   console.log();
-  console.log('=== D5 跨批次检测 ===');
+  console.log('=== D5 同名副本标记仍判为重复（原跨批次场景） ===');
   {
+    // findCrossBatchDuplicates 已作为死代码删除（无生产调用）；这里用 findDuplicates
+    // 覆盖同一套 normalizeCopyName + 逐分卷指纹逻辑：带 (1) 的副本应被归一成同名。
     const a = mkdir();
     const b = mkdir();
-    const ex = [mkfile(a, '已存在.part1.7z', 300000), mkfile(a, '已存在.part2.7z', 300000)];
-    const inc = [mkfile(b, '已存在 (1).part1.7z', 300000), mkfile(b, '已存在 (1).part2.7z', 300000)];
-    const r = findCrossBatchDuplicates([pack('E', ex)], [pack('N', inc)], sizeOf);
-    check('新包与已有包相同 → 判为重复', r.groups.length === 1, 'groups=' + r.groups.length);
-    check('剔除的是新来的那一份', r.droppedIds.length === 1 && r.droppedIds[0] === 'N', r.droppedIds.join(','));
-    check('保留清单里已有的那一份', r.groups[0]?.keep === 'E', r.groups[0]?.keep ?? '-');
+    const fa = [mkfile(a, '已存在.part1.7z', 300000), mkfile(a, '已存在.part2.7z', 300000)];
+    const fb = [mkfile(b, '已存在 (1).part1.7z', 300000), mkfile(b, '已存在 (1).part2.7z', 300000)];
+    const r = findDuplicates([pack('E', fa), pack('N', fb)], sizeOf);
+    check('「已存在 (1).part1.7z」与「已存在.part1.7z」判为同一份', r.groups.length === 1, 'groups=' + r.groups.length);
+    check('剔除的是带 (1) 的那一份', r.droppedIds.length === 1 && r.droppedIds[0] === 'N', r.droppedIds.join(','));
+    check('保留无后缀的那一份', r.groups[0]?.keep === 'E', r.groups[0]?.keep ?? '-');
   }
 
   /* ================= D6 / D7 ================= */
@@ -197,6 +204,35 @@ try {
     check('剔除的是 B', r.droppedIds[0] === 'B', r.droppedIds.join(','));
     check('内容不同的 C 未被剔除', !r.droppedIds.includes('C'), r.droppedIds.join(','));
     check('记为冲突（同名不同大小）', r.conflicts.length === 1, 'conflicts=' + r.conflicts.length);
+  }
+
+  /* ================= D9 ================= */
+  console.log();
+  console.log('=== D9 回归：单数字后缀不再被剥离（去重误判修复） ===');
+  {
+    // 归一化层：单数字后缀不得被吃掉（否则第 1/2/3 集会撞成同一个 key）
+    check('「video_1.rar」归一成 video_1', normalizeCopyName('video_1.rar') === 'video_1', normalizeCopyName('video_1.rar'));
+    check('「video_2.rar」归一成 video_2', normalizeCopyName('video_2.rar') === 'video_2', normalizeCopyName('video_2.rar'));
+    check('「episode-1.rar」归一成 episode-1', normalizeCopyName('episode-1.rar') === 'episode-1', normalizeCopyName('episode-1.rar'));
+    check('「episode-2.rar」归一成 episode-2', normalizeCopyName('episode-2.rar') === 'episode-2', normalizeCopyName('episode-2.rar'));
+
+    // 端到端：同名同体积的第 1/2 集**不应**被判为重复（旧实现会静默合并成一份，
+    // 第 2 集直接从待处理清单消失 —— 这是本修复要守住的核心不变量）。
+    const a = mkdir();
+    const b = mkdir();
+    const f1 = [mkfile(a, 'video_1.rar', 4096)];
+    const f2 = [mkfile(b, 'video_2.rar', 4096)];
+    const r = findDuplicates([pack('V1', f1), pack('V2', f2)], sizeOf);
+    check('video_1.rar 与 video_2.rar 不判为同一份', r.groups.length === 0, 'groups=' + r.groups.length);
+    check('两份都保留（不剔除）', r.droppedIds.length === 0, 'dropped=' + r.droppedIds.length);
+
+    // 对照：真正带 (1) 副本标记的仍应判为重复
+    const c = mkdir();
+    const d = mkdir();
+    const g1 = [mkfile(c, 'video_1.rar', 4096)];
+    const g2 = [mkfile(d, 'video_1 (1).rar', 4096)];
+    const r2 = findDuplicates([pack('K1', g1), pack('K2', g2)], sizeOf);
+    check('「video_1 (1).rar」与「video_1.rar」仍判为同一份', r2.groups.length === 1, 'groups=' + r2.groups.length);
   }
 } finally {
   try {

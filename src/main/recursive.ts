@@ -18,6 +18,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { logger } from './logger';
 import type { ArchiveFormat } from '@shared/types';
 import { sniffFormat, volumeKey, isVolumeMember, extractableFormats } from './engine';
 import type { WorkflowStep } from './workflows';
@@ -42,17 +43,19 @@ export interface SniffResult {
  * 嗅探单个文件的真实格式。
  * 魔数优先 —— 这是能认出"伪装成 jpg 的 rar"的关键。
  */
-export function sniffFile(filePath: string): SniffResult {
+export async function sniffFile(filePath: string): Promise<SniffResult> {
   // ① 魔数（读文件头，不看扩展名）
+  //    修复 ②：改用 fs.promises —— 本函数在 pickNextLayer 里对目录内每个候选文件调用，
+  //    同步 openSync/readSync 会在主进程事件循环上阻塞（大目录/机械盘更明显）。
   try {
-    const fd = fs.openSync(filePath, 'r');
+    const fh = await fs.promises.open(filePath, 'r');
     try {
       const buf = Buffer.alloc(SNIFF_BYTES);
-      const read = fs.readSync(fd, buf, 0, SNIFF_BYTES, 0);
-      const byMagic = sniffFormat(buf.subarray(0, read));
+      const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+      const byMagic = sniffFormat(buf.subarray(0, bytesRead));
       if (byMagic !== 'unknown') return { format: byMagic, via: 'magic' };
     } finally {
-      fs.closeSync(fd);
+      await fh.close();
     }
   } catch {
     /* 读不到就继续走扩展名 */
@@ -142,10 +145,11 @@ export interface LayerCandidate {
  *   - 分卷只取主卷（同一套分卷只解一次）
  *   - 若有多个候选：优先魔数命中的；再优先"看起来像伪装"的（扩展名与真实格式不符）
  */
-export function pickNextLayer(outDir: string): LayerCandidate | null {
+export async function pickNextLayer(outDir: string): Promise<LayerCandidate | null> {
+  // 修复 ②：readdir + sniffFile 全部异步化，避免在事件循环上同步遍历大目录。
   let entries: fs.Dirent[] = [];
   try {
-    entries = fs.readdirSync(outDir, { withFileTypes: true });
+    entries = await fs.promises.readdir(outDir, { withFileTypes: true });
   } catch {
     return null;
   }
@@ -162,7 +166,7 @@ export function pickNextLayer(outDir: string): LayerCandidate | null {
     // .apk 一律不作为递归候选（无条件，见本文件顶部「设计决定」）
     if (/\.apk$/i.test(e.name)) continue;
 
-    const sniffed = sniffFile(full);
+    const sniffed = await sniffFile(full);
     if (!canExtract(sniffed.format)) continue;
 
     // 分卷：只处理主卷，避免同一套分卷被解多次
@@ -247,34 +251,6 @@ function extMatchesFormat(ext: string, format: ArchiveFormat): boolean {
   }
 }
 
-/**
- * 格式 → 规范扩展名。
- *
- * 注意：**当前没有生产代码调用它**（pickNextLayer 已改为一律不改名，
- * 见那里的实测结论）。保留是因为工作流卡片里可能存有历史 renameTo 值，
- * 反查时需要它；导出给测试台做断言用。
- */
-export function formatToExt(format: ArchiveFormat): string {
-  switch (format) {
-    case 'zip':
-      return '.zip';
-    case '7z':
-      return '.7z';
-    case 'rar':
-      return '.rar';
-    case 'tar':
-      return '.tar';
-    case 'gz':
-      return '.gz';
-    case 'bz2':
-      return '.bz2';
-    case 'xz':
-      return '.xz';
-    default:
-      return '';
-  }
-}
-
 /* ------------------------------------------------------------------ *
  * 工作流链路优先
  * ------------------------------------------------------------------ */
@@ -354,8 +330,8 @@ export function removeIntermediates(files: string[]): { removed: number; bytes: 
       fs.rmSync(f, { force: true });
       removed += 1;
       bytes += size;
-    } catch {
-      /* 被占用等情况忽略 */
+    } catch (e) {
+      logger.warn(`清理中间压缩包失败（已跳过）：${f} -> ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -365,16 +341,24 @@ export function removeIntermediates(files: string[]): { removed: number; bytes: 
 /**
  * 给定一个已解压的中间压缩包，找出它同组的全部分卷（含它自己）。
  * 这样删除时不会留下孤儿分卷。
+ *
+ * **必须叠加 isVolumeMember 判断（修复误删）**：`volumeKey` 只剥分卷尾号，
+ * `data.7z` 与 `data.txt` 的 key 都是 `data`。若只比 key，层目录里与压缩包
+ * 同基名的普通文件（说明文本、封面图…）会被当成"兄弟分卷"，在中间包清理
+ * 阶段被删掉。现在只认真正的分卷成员，外加它自己。
  */
 export function siblingsOfVolume(primary: string): string[] {
   const dir = path.dirname(primary);
-  const stem = volumeKey(path.basename(primary));
+  const primaryName = path.basename(primary);
+  const stem = volumeKey(primaryName);
   const out: string[] = [];
 
   try {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!e.isFile()) continue;
-      if (volumeKey(e.name) === stem) out.push(path.join(dir, e.name));
+      if (volumeKey(e.name) !== stem) continue;
+      if (e.name !== primaryName && !isVolumeMember(e.name)) continue;
+      out.push(path.join(dir, e.name));
     }
   } catch {
     /* ignore */

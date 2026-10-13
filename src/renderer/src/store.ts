@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import type { AppSettings, ArchiveInfo, PackItem, TaskRecord, ThemeMode, WorkflowCard, ImportPreviewData } from '@shared/types';
 import { DEFAULT_SETTINGS } from '@shared/types';
+/* 包名归一规则与主进程**共用同一份实现**（shared/volumeKey.ts）。
+ * 原先这里手抄了一份，靠注释提醒"与 dedup.ts 保持一致" —— 一旦两边规则漂移，
+ * 就会出现"渲染层判为重复、主进程却不认"的不一致。 */
+import { normalizeCopyName } from '@shared/volumeKey';
 
 export type ViewKey = 'extract' | 'workflows' | 'history';
 export type ToastKind = 'ok' | 'warn' | 'bad' | 'info';
@@ -16,6 +20,14 @@ export interface ArchiveCache {
   status: 'idle' | 'loading' | 'ok' | 'error' | 'needs-password';
   info?: ArchiveInfo;
   error?: string;
+}
+
+/** 重复包询问（替代 window.confirm：非阻塞、与设计系统一致的对话框） */
+export interface DupPrompt {
+  count: number;
+  details: string[];
+  /** 本次拖入的原始路径：用户选择"加回清单"时用它重新扫描 */
+  paths: string[];
 }
 
 interface State {
@@ -41,6 +53,9 @@ interface State {
   passwordFor: string | null;
   passwordError: string | null;
 
+  /** 待用户确认的重复包询问（仅 dupPolicy==='ask' 时出现） */
+  dupPrompt: DupPrompt | null;
+
   // actions
   init(): Promise<void>;
   setView(v: ViewKey): void;
@@ -55,11 +70,16 @@ interface State {
   loadArchive(id: string, password?: string): Promise<void>;
 
   startExtractFromSelection(): Promise<void>;
+  /** 批量解压：对当前清单里所有可解压的包逐个入队 */
+  startExtractAll(): Promise<void>;
   startExtract(packId: string, opts?: { outDir?: string; password?: string }): Promise<void>;
 
   updateTask(t: TaskRecord): void;
   removeTask(id: string): void;
   clearFinished(): void;
+
+  /** 响应用户对重复包询问的选择：true=保持剔除 / false=加回清单 */
+  resolveDupPrompt(keep: boolean): Promise<void>;
 
   patchSettings(patch: Partial<AppSettings>): Promise<void>;
 
@@ -78,7 +98,8 @@ interface State {
 
   requestPassword(taskId: string): void;
   closePassword(): void;
-  submitPassword(pwd: string): Promise<void>;
+  /** remember=true 时把该密码并入记忆（并开启「记住密码」），供工作流锚点命中 */
+  submitPassword(pwd: string, remember?: boolean): Promise<void>;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -86,27 +107,8 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 /** 成功任务的自动收起定时器（避免重复挂号） */
 const collapseTimers = new Map<string, number>();
 
-/** 规范化包名（与主进程 dedup.ts 的同名函数保持完全一致） */
-function normalizeCopyName(name: string): string {
-  let s = name;
-  for (let i = 0; i < 5; i++) {
-    const before = s;
-    s = s.replace(/\.(part\d+|z\d{2}|r\d{2}|\d{3})$/i, '');
-    s = s.replace(/\.(7z|zip|rar|tar|gz|tgz|bz2|xz|cab)$/i, '');
-    if (s === before) break;
-  }
-  let prev = '';
-  while (prev !== s) {
-    prev = s;
-    s = s.replace(/[\s_-]*[(（]\s*\d+\s*[)）]$/, '');
-    s = s.replace(/[\s_-]+(?:副本|复制|copy|copia)$/i, '');
-    s = s.replace(/[\s_-]+copy\d*$/i, '');
-    // 浏览器"另存为"产生的单位数后缀，如 foo_1 / foo-2（两位数以上视为不同包名，不动）
-    s = s.replace(/[_-]+[1-9]$/, '');
-  }
-  s = s.replace(/[\s_-]+$/, '');
-  return s.trim().toLowerCase();
-}
+/** init() 幂等守卫：StrictMode 下 effect 会双调用，必须**同步**置位，避免重复注册 IPC 监听 */
+let initStarted = false;
 
 /** 取该包的分卷大小签名：分卷数 + 逐分卷字节数（主进程已按文件名排序算好） */
 function volumeSignatureOf(p: PackItem): string {
@@ -154,9 +156,14 @@ export const useStore = create<State>((set, get) => ({
   passwordFor: null,
   passwordError: null,
 
+  dupPrompt: null,
+
   /* ------------------------------------------------------------------ */
 
   async init() {
+    // 幂等守卫：React.StrictMode 下 effect 双调用会重复注册监听；同步置位才能真正拦住
+    if (initStarted) return;
+    initStarted = true;
     const settings = await window.api.getSettings();
     const dark =
       settings.theme === 'dark' ||
@@ -249,31 +256,36 @@ export const useStore = create<State>((set, get) => ({
     const count = mergedDup;
     if (count > 0) {
       if (get().settings.dupPolicy === 'ask') {
-        const keepDropped = window.confirm(
-          `检测到 ${count} 个重复包（同名且分卷大小完全一致），已自动剔除：\n\n` +
-            dupDetails.slice(0, 8).join('\n') +
-            (dupDetails.length > 8 ? `\n… 其余 ${dupDetails.length - 8} 条` : '') +
-            `\n\n点【确定】保持剔除；点【取消】把它们加回清单。`
-        );
-        if (!keepDropped) {
-          const back = await window.api.scanPacks(paths);
-          const cur = [...get().packs];
-          for (const p of back) {
-            if (!cur.some((x) => x.primary === p.primary)) cur.push(p);
-          }
-          set({ packs: cur });
-          get().toast('warn', '已把重复包加回清单', `共 ${count} 份，同一内容会出现多张卡片`);
-          return added;
-        }
-        get().toast('info', `已剔除 ${count} 个重复包`, '同名且分卷大小一致，清单中保留一份');
-      } else {
-        // silent（默认）
-        get().toast('info', `已剔除 ${count} 个重复包`, '同名且逐分卷大小一致，清单中保留一份');
+        /* 修复 P2-⑨：原先用 window.confirm —— 阻塞主线程、破坏设计一致性、无法显示完整清单。
+         * 改为把询问写入状态，由 DuplicatePromptDialog 自绘（非阻塞，Esc/按钮皆可应答）。 */
+        set({ dupPrompt: { count, details: dupDetails, paths } });
+        return added;
       }
+      // silent（默认）
+      get().toast('info', `已剔除 ${count} 个重复包`, '同名且逐分卷大小一致，清单中保留一份');
     } else if (added) {
       get().toast('ok', `已添加 ${added} 个资源包`, undefined);
     }
     return added;
+  },
+
+  async resolveDupPrompt(keep) {
+    const prompt = get().dupPrompt;
+    if (!prompt) return;
+    set({ dupPrompt: null });
+
+    if (keep) {
+      get().toast('info', `已剔除 ${prompt.count} 个重复包`, '同名且分卷大小一致，清单中保留一份');
+      return;
+    }
+    // 用户选择"加回清单"：重新扫描本次拖入的路径，把不在清单里的补回去
+    const back = await window.api.scanPacks(prompt.paths);
+    const cur = [...get().packs];
+    for (const p of back) {
+      if (!cur.some((x) => x.primary === p.primary)) cur.push(p);
+    }
+    set({ packs: cur });
+    get().toast('warn', '已把重复包加回清单', `共 ${prompt.count} 份，同一内容会出现多张卡片`);
   },
 
   dedupePacks() {
@@ -336,6 +348,20 @@ export const useStore = create<State>((set, get) => ({
     const { selectedId, packs } = get();
     const pack = packs.find((p) => p.id === selectedId) ?? packs[0];
     if (pack) await get().startExtract(pack.id);
+  },
+
+  async startExtractAll() {
+    const targets = get().packs.filter((p) => p.extractable);
+    if (!targets.length) {
+      get().toast('warn', '没有可解压的资源包', '清单里没有支持的压缩格式');
+      return;
+    }
+    // 逐个入队：主进程按 maxConcurrent 调度，这里只负责全部挂号
+    for (const p of targets) {
+      const task = await window.api.startExtract({ paths: [p.primary], label: p.baseName });
+      get().updateTask(task);
+    }
+    get().toast('info', `已加入队列 ${targets.length} 个资源包`, '按设置里的并发数依次处理');
   },
 
   async startExtract(packId, opts = {}) {
@@ -460,6 +486,9 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({
       tasks: s.tasks.filter((t) => !['done', 'failed', 'cancelled'].includes(t.status))
     }));
+    /* 修复 P2-⑫：原先只清渲染层状态，主进程 tasks 里仍留着已完成任务，
+     * 下次拉取会把它们又推回来。同步调用主进程「清除已完成任务」IPC（task:clear-finished）。 */
+    void window.api.clearFinishedTasks();
   },
 
   /* ------------------------------------------------------------------ */
@@ -491,15 +520,28 @@ export const useStore = create<State>((set, get) => ({
     set({ passwordFor: null, passwordError: null });
   },
 
-  async submitPassword(pwd) {
+  async submitPassword(pwd, remember) {
     const id = get().passwordFor;
     if (!id) return;
+
+    /* 修复 P0-⑩（UI 侧）：勾选「记住此密码」时，把该密码并入记忆并打开「记住密码」开关。
+     * 主进程的 rememberPassword() 只有在 settings.rememberPasswords 为 true 时才写入，
+     * 所以这里必须显式置位 + 落盘，才能让锚点工作流真正命中。 */
+    if (remember) {
+      const cur = get().settings.passwords;
+      const next = [pwd, ...cur.filter((x) => x !== pwd)].slice(0, 30);
+      await get().patchSettings({ rememberPasswords: true, passwords: next });
+    }
+
     const task = get().tasks.find((t) => t.id === id);
     const res = await window.api.retryTask(id, pwd, task?.outDir || undefined);
     if (res) {
       get().updateTask(res);
       get().closePassword();
       get().toast('info', '已用新密码重试', task?.label);
+    } else {
+      // 主进程查无此任务（可能已被清理）：给出反馈，而不是静默卡住对话框
+      set({ passwordError: '该任务已不存在，请关闭对话框后重试' });
     }
   }
 }));

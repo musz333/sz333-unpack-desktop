@@ -1,0 +1,134 @@
+name: CI
+
+# 目标：任何 push / PR 都必须证明「源码 → 构建 → 打包产物」三者一致，
+# 并且跑通全部硬断言套件（--layers / --scan / --cjk + 4 套 verify 脚本），
+# 失败 0 项（非 0 退出码即失败）才算过。
+#
+# Node 版本要求 ≥ 22.6：verify-fixes.mts / verify-pwd-e2e.mts / verify-syntax.mts
+# 依赖 `node --experimental-strip-types`（Node 22.6 起提供）。用 Node 20 会直接失败。
+#
+# ⚠️ 本文件在编写环境（无 GitHub Actions）**无法验证**，属于「已写-未验证」，
+#    首次上线请在 Actions 里观察一轮。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # ≥22.6：.mts 断言脚本需要 --experimental-strip-types
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_MIRROR: https://registry.npmmirror.com/-/binary/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://registry.npmmirror.com/-/binary/electron-builder-binaries/
+
+      # 严格类型检查（含 noUnusedLocals / noUnusedParameters 门禁）
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (out/)
+        run: npm run build
+
+      - name: Package (win dir, no-sign config)
+        run: npx electron-builder --win dir --config electron-builder.nosign.config.js
+
+      # 断言 ①：asar 内 out/** 与工程 out/** 逐文件 SHA-256 一致（防"打包拿错产物"）
+      - name: 'Assertion 1: asar out/** == project out/**'
+        run: node scripts/ci-assert-asar.mjs "release/win-unpacked/resources/app.asar"
+
+      # 断言 ②：已发布资产哈希留底 + 交付 bundle 与源码同源（防"交付物落后于源码"）
+      - name: 'Assertion 2: published-asset checksums / delivery-not-stale'
+        run: node scripts/ci-assert-release-assets.mjs
+
+      # 三套硬断言套件：都要打印「失败 0 项」
+      - name: Suites (--layers / --scan / --cjk) must report 0 failures
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 让子进程 UTF-8 输出被正确解码，否则中文『失败 0 项』匹配会因编码而误判
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          $exe = "node_modules\electron\dist\electron.exe"
+          $suites = @('--layers', '--scan', '--cjk')
+          foreach ($flag in $suites) {
+            Write-Host "===== running $flag ====="
+            $out = & $exe --no-sandbox --disable-gpu scripts\probe-entry.cjs $flag 2>&1 | Out-String
+            Write-Host $out
+            if ($out -notmatch '失败 0 项') {
+              throw "suite $flag 未通过（输出中不含『失败 0 项』）"
+            }
+          }
+
+      # ------------------------------------------------------------------ #
+      # 最强测试套件（评审 P1：此前未纳入 CI）
+      #   · verify-fixes.mts   70 断言：加载真实源码模块做行为断言
+      #   · verify-pwd-e2e.mts 14 断言：用仓库内 resources/7z.exe 做真实解压 E2E
+      #   · verify-dedup.mjs   29 断言：esbuild 现场打包真实 dedup.ts 后断言
+      #   · verify-syntax.mts  12 断言：括号配平 + node --check
+      # 判据：退出码为 0 且输出含「失败 0 项」。
+      # ------------------------------------------------------------------ #
+      - name: 'Suite: verify-fixes.mts (70 assertions)'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 让子进程 UTF-8 输出被正确解码，否则中文『失败 0 项』匹配会因编码而误判
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $out = & node --experimental-strip-types scripts\verify-fixes.mts 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0 -or $out -notmatch '失败 0 项') {
+            throw "verify-fixes.mts 未通过（exit=$code，输出中未见『失败 0 项』）"
+          }
+
+      - name: 'Suite: verify-pwd-e2e.mts (14 assertions, real 7z.exe)'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 让子进程 UTF-8 输出被正确解码，否则中文『失败 0 项』匹配会因编码而误判
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $out = & node --experimental-strip-types scripts\verify-pwd-e2e.mts 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0 -or $out -notmatch '失败 0 项') {
+            throw "verify-pwd-e2e.mts 未通过（exit=$code，输出中未见『失败 0 项』）"
+          }
+
+      - name: 'Suite: verify-dedup.mjs (29 assertions, esbuild)'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 让子进程 UTF-8 输出被正确解码，否则中文『失败 0 项』匹配会因编码而误判
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $out = & node scripts\verify-dedup.mjs 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0 -or $out -notmatch '失败 0 项') {
+            throw "verify-dedup.mjs 未通过（exit=$code，输出中未见『失败 0 项』）"
+          }
+
+      - name: 'Suite: verify-syntax.mts (bracket-balance + node --check)'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 让子进程 UTF-8 输出被正确解码，否则中文『失败 0 项』匹配会因编码而误判
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $out = & node --experimental-strip-types scripts\verify-syntax.mts 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0 -or $out -notmatch '失败 0 项') {
+            throw "verify-syntax.mts 未通过（exit=$code，输出中未见『失败 0 项』）"
+          }
+
+      # 说明：scripts/verify-listing.mjs 依赖 test-corpus/（已被 .gitignore 排除，
+      # 且其 manifest.json 里 cases[].dir 为生成机的绝对路径），在全新 checkout 上
+      # 无法运行；且它是「旧实现 vs 新实现」的基线对照脚本，不适合做硬门禁。
+      # 如需纳入，须先在 CI 执行 scripts/make-test-corpus.ps1 重建语料（较重，另议）。

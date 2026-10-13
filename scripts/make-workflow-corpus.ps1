@@ -4,7 +4,7 @@
 #   batch1\RX-4114.part1.7z.001   外层分卷（不加密）→ inner.7z（加密 Secret2026）→ 内容
 #   batch2\RX-4114.part1.7z.001   与 batch1 完全同源，用于验证"第 2 批应命中卡片"
 #
-# 为什么必须前置生成：verify-workflow 走的是真实解压，而默认 sourcePolicy='delete'
+# 为什么必须前置生成：verify-workflow 走的是真实解压，而默认 sourcePolicy='keep'
 # 会把源包彻底删掉 —— 也就是说**每跑一次 --wf，语料就被消费掉了**，
 # 不重新生成的话第二次报「缺少测试包」。
 #

@@ -14,7 +14,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT: Record<Variant, string> = {
-  primary: 'bg-brand text-white border-brand hover:bg-brand-hover hover:border-brand-hover',
+  /* primary 底色用 brand-hover（#0F766E）而非 brand（#0D9488）：
+     白字对比度 3.74:1 → 5.47:1，达到 WCAG AA（14px 正文需 4.5:1）。
+     前景用 on-accent 语义令牌而非 text-white：
+     深色主题下强调色是亮青绿，白字仅 1.86:1 不可读，on-accent 会切换为近黑（9.71:1）。 */
+  primary: 'bg-brand-hover text-on-accent border-brand-hover hover:bg-brand hover:border-brand',
   default: 'bg-ink-0 text-fg border-line hover:bg-ink-1 hover:border-line-strong',
   ghost: 'bg-transparent text-fg-muted border-transparent hover:bg-ink-1 hover:text-fg',
   danger: 'bg-ink-0 text-bad border-bad/40 hover:bg-bad-soft'
@@ -36,7 +40,7 @@ export function Button({
   disabled,
   ...rest
 }: ButtonProps) {
-  const iconSize = size === 'sm' ? 16 : 16;
+  const iconSize = 16;
   return (
     <button
       {...rest}
@@ -104,15 +108,15 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={[
-        'relative h-[22px] w-[38px] shrink-0 rounded-full border transition-colors duration-180 ease-out',
+        'relative h-[22px] w-[38px] shrink-0 rounded-full border transition-colors duration-base ease-out',
         checked ? 'border-brand bg-brand' : 'border-line-strong bg-ink-1',
         disabled ? 'cursor-not-allowed opacity-45' : ''
       ].join(' ')}
     >
       <span
         className={[
-          'absolute top-[2px] left-[2px] h-4 w-4 rounded-full shadow-sm transition-transform duration-180 ease-out',
-          checked ? 'translate-x-4 bg-white' : 'translate-x-0 bg-ink-0'
+          'absolute top-[2px] left-[2px] h-4 w-4 rounded-full shadow-sm transition-transform duration-base ease-out',
+          checked ? 'translate-x-4 bg-on-accent' : 'translate-x-0 bg-ink-0'
         ].join(' ')}
       />
     </button>
@@ -159,7 +163,9 @@ export function Progress({
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full border border-line bg-ink-1">
       {indeterminate ? (
-        <div className={['h-full w-1/3 rounded-full', color, 'animate-[fade-in_0.6s_ease-out]'].join(' ')} style={{ animation: 'pulse 1.4s ease-in-out infinite' }} />
+        /* 原实现用内联 style 引用未定义的 keyframes `pulse`，与类名 animate-[fade-in...] 冲突，
+           导致动画完全失效。改用 Tailwind 的 animate-pulse（keyframes 已在 tailwind.config.js 补上）。 */
+        <div className={['h-full w-1/3 rounded-full', color, 'animate-pulse'].join(' ')} />
       ) : (
         <div
           className={['h-full rounded-full transition-[width] duration-200 ease-out', color].join(' ')}

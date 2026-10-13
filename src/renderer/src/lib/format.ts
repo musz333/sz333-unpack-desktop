@@ -45,8 +45,3 @@ export function shortPath(p: string, keep = 2): string {
   if (parts.length <= keep) return p;
   return `…\\${parts.slice(-keep).join('\\')}`;
 }
-
-export function baseName(p: string): string {
-  const parts = p.split(/[\\/]/);
-  return parts[parts.length - 1] || p;
-}

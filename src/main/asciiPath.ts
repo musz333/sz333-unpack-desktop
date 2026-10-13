@@ -9,6 +9,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toAsciiName, shortHash } from './asciiName';
+import { logger } from './logger';
+
+/** 异步判断路径是否存在（修复 ② 配套；避免在改名/搬家路径上再引入同步 existsSync） */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.promises.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 我们主动创建的路径（输出根 + 改名后的目录树）总长度上限。
@@ -83,12 +94,16 @@ export function archiveStem(anyMember: string, allMembers?: string[]): string {
 /**
  * 输出目录含非 ASCII、**或整体过长**时，生成一个可用的目录。
  *
- * 注意两点：
- *  ① 不能只改叶子目录 —— 父目录里的中文同样会让老资源包出问题，
- *     所以这里对盘符之后的每一段都做 ASCII 化（盘符/UNC 前缀原样保留）；
+ * 注意三点：
+ *  ① **只处理叶子目录名，父目录段一律原样保留。**
+ *     旧实现对盘符之后的**每一段**都做 ASCII 化，随后 `renameSync` 把整个
+ *     输出目录搬到新的镜像路径 —— 结果 `D:\我的下载\资源名` 被搬到
+ *     `D:\u6211u7684u4E0Bu8F7D\资源名`，凭空多出一层镜像目录，
+ *     产物也不再位于源文件旁边，与"不破坏用户原本指定的目录"的承诺相悖。
+ *     父目录是用户自己的目录结构，不该被我们改写。
  *  ② 长度也要管 —— 纯 ASCII 的长路径一样会破 260，所以**无论有没有中文**，
- *     只要总长超过 PATH_BUDGET 就压缩叶子目录名（截短 + 短哈希）；
- *     盘符之前的既有前缀不动（那是用户自己的目录结构，不该被我们改写）。
+ *     只要总长超过 PATH_BUDGET 就压缩叶子目录名（截短 + 短哈希）。
+ *  ③ 不改动父目录后，预算按"真实的父目录长度"计算，不会低估。
  */
 export function ensureAsciiOutDir(outDir: string, preferBase?: string): { dir: string; changed: boolean; from?: string } {
   const hasNonAscii = /[^\x00-\x7F]/.test(outDir);
@@ -112,10 +127,10 @@ export function ensureAsciiOutDir(outDir: string, preferBase?: string): { dir: s
   const parts = rest.split(/[\\/]/).filter((s) => s !== '');
   if (!parts.length) return { dir: outDir, changed: false };
 
-  // 逐段 ASCII 化；叶子目录优先用包名（更可读），否则用原叶子名。
-  // 长度预算：先算「盘符 + 其余各段」占掉多少，剩下的才是叶子的额度；
-  // 额度不足时 toAsciiName 会自己截短并补短哈希，不会硬撑。
-  const nonLeafParts = parts.slice(0, -1).map((seg) => toAsciiName(seg).name);
+  /* 父目录段**原样保留**（见函数头 ①）。
+   * 只有叶子目录会被 ASCII 化 —— 它是"我们按包名建的目录"或"用户指定的目录名"，
+   * 前者可以改名，后者由调用方通过 allowRenameDir 决定是否改名。 */
+  const nonLeafParts = parts.slice(0, -1);
   const headLen =
     (prefix ? prefix.length + 1 : 0) +
     nonLeafParts.reduce((sum, n) => sum + n.length + 1, 0);
@@ -146,26 +161,28 @@ export function ensureAsciiOutDir(outDir: string, preferBase?: string): { dir: s
 }
 
 /** 递归把目录下的所有条目改成 ASCII 名（自底向上，避免父路径先变导致子路径失效） */
-export function renameTreeToAscii(root: string): { renames: RenamePair[]; conflicts: number } {
+export async function renameTreeToAscii(root: string): Promise<{ renames: RenamePair[]; conflicts: number }> {
   const renames: RenamePair[] = [];
   let conflicts = 0;
 
   /** 收集所有条目（含目录），按路径深度从深到浅排序 */
   const all: { p: string; isDir: boolean }[] = [];
-  const walk = (dir: string) => {
+  // 修复 ②：改用 fs.promises —— 本函数会对整棵产物树做两次遍历（收集 + 改名），
+  // 同步 readdirSync/renameSync 在十万级目录上会冻结主进程事件循环。
+  const walk = async (dir: string): Promise<void> => {
     let entries: fs.Dirent[] = [];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const e of entries) {
       const p = path.join(dir, e.name);
       all.push({ p, isDir: e.isDirectory() });
-      if (e.isDirectory()) walk(p);
+      if (e.isDirectory()) await walk(p);
     }
   };
-  walk(root);
+  await walk(root);
 
   /* ------------------------------------------------------------------
    * 阶段 1：自顶向下**规划**每个条目的最终名字，以及它最终的完整路径长度
@@ -207,12 +224,12 @@ export function renameTreeToAscii(root: string): { renames: RenamePair[]; confli
 
     let target = path.join(dir, safe);
     // 同名冲突 → 追加序号
-    if (fs.existsSync(target) && path.resolve(target) !== path.resolve(item.p)) {
+    if ((await pathExists(target)) && path.resolve(target) !== path.resolve(item.p)) {
       const ext = path.extname(safe);
       const stem = safe.slice(0, safe.length - ext.length);
       let i = 2;
       let candidate = path.join(dir, `${stem}_${i}${ext}`);
-      while (fs.existsSync(candidate)) {
+      while (await pathExists(candidate)) {
         i += 1;
         candidate = path.join(dir, `${stem}_${i}${ext}`);
       }
@@ -221,33 +238,54 @@ export function renameTreeToAscii(root: string): { renames: RenamePair[]; confli
     }
 
     try {
-      fs.renameSync(item.p, target);
+      await fs.promises.rename(item.p, target);
       renames.push({ from: item.p, to: target });
-    } catch {
-      // 单个条目失败不影响整体（例如被占用）
+    } catch (e) {
+      // 单个条目失败不影响整体（例如被占用），但要留下诊断线索
+      logger.debug(`中文名转 ASCII 失败（已跳过）：${item.p} -> ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   return { renames, conflicts };
 }
 
-/** 一步到位：必要时的目录替换 + 树内 ASCII 化 */
-export function applyAsciiPolicy(outDir: string, preferBase?: string): AsciiResult {
-  const dirRes = ensureAsciiOutDir(outDir, preferBase);
+/**
+ * 一步到位：必要时的目录替换 + 树内 ASCII 化。
+ *
+ * @param opts.allowRenameDir
+ *   · `true` / 未指定（默认）→ 允许把**输出目录本身**换成英文名。
+ *     只用于「我们按包名自建」的目录（`outDirAuto`）。
+ *   · `false` → **绝不动目录名**，只做树内文件/子目录的 ASCII 化。
+ *     用于「用户显式指定的输出目录」：那是用户自己的目录，
+ *     不该被我们改名，更不该被整体搬走（旧实现会 `renameSync` 整个目录）。
+ */
+export async function applyAsciiPolicy(
+  outDir: string,
+  preferBase?: string,
+  opts: { allowRenameDir?: boolean } = {}
+): Promise<AsciiResult> {
+  const allowRenameDir = opts.allowRenameDir !== false;
+  const dirRes: { dir: string; changed: boolean; from?: string } = allowRenameDir
+    ? ensureAsciiOutDir(outDir, preferBase)
+    : { dir: outDir, changed: false };
   let finalDir = dirRes.dir;
 
   // 目录被替换后，原解压结果还在旧目录里，需要整体搬过去
-  if (dirRes.changed && fs.existsSync(outDir)) {
+  // 修复 ②：搬家与树内改名全部改用 fs.promises（调用链同步改 async）。
+  if (dirRes.changed && (await pathExists(outDir))) {
     try {
-      fs.mkdirSync(path.dirname(finalDir), { recursive: true });
-      fs.renameSync(outDir, finalDir);
-    } catch {
+      await fs.promises.mkdir(path.dirname(finalDir), { recursive: true });
+      await fs.promises.rename(outDir, finalDir);
+    } catch (e) {
       // 搬家失败（跨卷等）→ 保持原目录，仅做树内改名
+      logger.warn(`输出目录改英文名失败（保持原目录）：${outDir} -> ${e instanceof Error ? e.message : String(e)}`);
       finalDir = outDir;
     }
   }
 
-  const tree = fs.existsSync(finalDir) ? renameTreeToAscii(finalDir) : { renames: [], conflicts: 0 };
+  const tree = (await pathExists(finalDir))
+    ? await renameTreeToAscii(finalDir)
+    : { renames: [], conflicts: 0 };
 
   return {
     outDir: finalDir,

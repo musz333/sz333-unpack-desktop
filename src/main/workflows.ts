@@ -6,7 +6,11 @@
  * 命名结构）与层数评分；分数不足或有同分竞争时，宁可走常规探测也绝不静默走错链路。
  *
  * 与 v1.9 完全一致的关键规则：
- *   ① 锚点密码必须在**用户自己的密码列表**里才算命中（绝不用记录自证）
+ *   ① 锚点密码优先从**用户自己的密码列表**确认命中（不轻易用记录自证）
+ *      —— **修复 P0-① 的唯一例外**：密码列表里没有该锚点、但体积指纹一致时，
+ *      允许"锚点自证"给一个保守分（见 matchWorkflow 与 selfAttestScore），
+ *      否则全新安装/未记住密码时旗舰功能永不命中。自证命中会被调用方区别对待
+ *      （失误不立即停用卡片）。
  *   ② 锚点命中但体积不符 → 必须有名称印证（两票制）才采用
  *   ③ 同分 → 命中次数多者优先；仍分不出 → 放弃匹配
  *   ④ 命中失败：密码错 1 次即自动停用；普通失败连续 2 次停用
@@ -15,6 +19,36 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { userDataDir } from './engine';
+import { logger } from './logger';
+
+/* ------------------------------------------------------------------ *
+ * 落盘密码加解密（修复 P0-②）
+ *
+ * 设计要点：本模块**不直接 import electron**。
+ * 原因：`scripts/verify-fixes.mts` 会把 src 原样搬到临时目录、用 Node 的
+ * `--experimental-strip-types` 直接加载 `tasks.ts`（→ 间接加载本模块）。
+ * 一旦这里 `import { safeStorage } from 'electron'`，Node 解析不到 electron 模块，
+ * 整套断言会直接崩掉。因此把"加解密"抽象成可注入的 codec：
+ *   · 默认 = 恒等（明文），保证脱离 Electron 时（测试/脚本）行为不变；
+ *   · 主进程启动时通过 setSecretCodec 注入基于 safeStorage（DPAPI）的实现。
+ *
+ * 语义约定：`seal` 把明文变成落盘形态（可能带 `enc:` 前缀）；`open` 把落盘形态
+ * 还原成明文。**内存中的 Workflow 始终是明文**（匹配、导出、UI 都按明文工作），
+ * 只有 `loadWorkflows` / `saveWorkflows` 这一对读写函数经过 codec。
+ * ------------------------------------------------------------------ */
+export interface SecretCodec {
+  seal(plain: string): string;
+  open(stored: string): string;
+}
+
+/** 默认恒等 codec：无 Electron 环境下退化为明文（向后兼容） */
+let secretCodec: SecretCodec = { seal: (s) => s, open: (s) => s };
+
+/** 注入加解密实现（由主进程 index.ts 在 app ready 后调用一次） */
+export function setSecretCodec(codec: SecretCodec): void {
+  secretCodec = codec;
+}
+
 
 /* ------------------------------------------------------------------ *
  * 类型
@@ -73,6 +107,13 @@ export interface WorkflowMatch {
   reason: string;
   /** 候选里有同分竞争者（歧义，不采用） */
   ambiguous: boolean;
+  /**
+   * 命中是否来自"锚点自证"（修复 P0-①）：
+   * 卡片锚点**不在**用户密码列表里，但体积指纹一致，于是用卡片自记的锚点
+   * 做了一次保守命中。调用方据此放宽失误惩罚 —— 自证可能只是"另一个同尺寸的包"，
+   * 不该像"用户确实持有该密码"那样一次错就永久停用卡片。
+   */
+  selfAttested?: boolean;
 }
 
 export const WORKFLOW_CONST = {
@@ -86,7 +127,17 @@ export const WORKFLOW_CONST = {
   sizeToleranceRatio: 0.02,
   sizeToleranceMin: 65536,
   /** 单条指纹里最多收集多少条目（超大包防止列表过长） */
-  maxVolumes: 64
+  maxVolumes: 64,
+  /**
+   * 锚点自证分（修复 P0-①）。
+   *
+   * 卡片锚点**不在**用户密码列表里、但体积指纹一致时给的保守分。
+   * 该锚点本就是"用户上一次成功解压时用过、并被记进卡片"的密码，
+   * 不是凭空捏造；体积一致（±2%）进一步把误命中概率压低。
+   * 只给 30（低于真命中 45）—— 体积一致(30) + 自证(30) 已足够越过阈值 45，
+   * 但不会盖过"用户确实持有密码"的强度。
+   */
+  selfAttestScore: 30
 } as const;
 
 /** 卡片包 schema 版本（与 v1.9 的 WorkflowPack 对齐） */
@@ -198,7 +249,10 @@ export function matchWorkflow(
   let best: Workflow | null = null;
   let bestScore = -1;
   let bestReason = '';
+  let bestSelfAttested = false;
   let tieCount = 0;
+  /** 与 bestScore 同分的候选（同分裁决只允许在这个子集里比较命中次数） */
+  let tied: Workflow[] = [];
   let twoVoteRejectScore = -1;
   let twoVoteRejectReason = '';
 
@@ -208,6 +262,7 @@ export function matchWorkflow(
     let sizeAgree = false;
     let sizeDisagree = false;
     let anchorHit = false;
+    let selfAttested = false;
 
     const hint = w.nameHint || w.name || '';
     const nameHit =
@@ -251,6 +306,22 @@ export function matchWorkflow(
         score += 10;
         reasons.push('与密码双重印证');
       }
+    } else if (w.anchorPassword && sizeAgree) {
+      /* 冷启动自证（修复 P0-①）。
+       *
+       * 场景：刚重装 / 用户关了"记住密码" / 换了机器 —— 密码列表为空或未收录该锚点。
+       * 此时卡片照常生成却永远拿不到锚点分（仅指纹+名称最多 ~38 < 阈值 45），
+       * 于是旗舰功能永不自动命中，等于没有。
+       *
+       * 这里允许用**卡片自己记录的锚点**做一次保守命中，但硬性要求体积指纹一致：
+       *   · 该锚点本就是用户上次成功解压时用的密码（不是凭空捏造）；
+       *   · 体积在 ±2% 内一致，才认为"很可能就是同一来源"。
+       * 分值与真命中拉开（30 < 45），且调用方会对自证命中放宽失误惩罚
+       * （见 WorkflowMatch.selfAttested）—— 即便自证错了，代价也只是走一次探测。
+       */
+      selfAttested = true;
+      score += WORKFLOW_CONST.selfAttestScore;
+      reasons.push('锚点自证（体积一致）');
     }
 
     // ③ 名称：仅辅助。锚点未命中时只给极小分值，避免"名称像"就自作主张走链路
@@ -286,9 +357,12 @@ export function matchWorkflow(
       bestScore = score;
       best = w;
       bestReason = reasons.join('、');
+      bestSelfAttested = selfAttested;
       tieCount = 1;
+      tied = [w];
     } else if (score === bestScore && score > 0) {
       tieCount += 1;
+      tied.push(w);
     }
 
     // 两票制硬门槛：锚点命中 + 体积不符 + 名称也不符 → 不允许采用
@@ -323,7 +397,10 @@ export function matchWorkflow(
     let byHits: Workflow | null = null;
     let bestHits = -1;
     let secondHits = -1;
-    for (const w of candidates) {
+    /* 只在**同分子集**里比命中次数。原实现在全部候选里取最大 hitCount，
+     * 会让一条分数更低（甚至低于阈值）但命中多的记录赢得裁决，并把它的低分
+     * 包装成最高分上报 —— 走错链路且置信度失真。 */
+    for (const w of tied) {
       if (w.hitCount > bestHits) {
         secondHits = bestHits;
         bestHits = w.hitCount;
@@ -335,6 +412,7 @@ export function matchWorkflow(
     if (byHits && bestHits >= 1 && bestHits >= secondHits + 2) {
       result.flow = byHits;
       result.score = bestScore;
+      result.selfAttested = bestSelfAttested;
       result.reason = `同分（${bestScore}）但该记录命中 ${byHits.hitCount} 次，优先采用`;
       return result;
     }
@@ -346,6 +424,7 @@ export function matchWorkflow(
 
   result.flow = best;
   result.score = bestScore;
+  result.selfAttested = bestSelfAttested;
   result.reason = `${bestReason}，置信度 ${bestScore}`;
   return result;
 }
@@ -479,16 +558,54 @@ export function chainText(w: Workflow): string {
 
 const file = () => path.join(userDataDir(), 'workflows.json');
 
+/**
+ * 把磁盘上的原始记录解密成内存明文形态（修复 P0-②）。
+ *
+ * 只处理两个敏感字段：`anchorPassword` 与 `steps[].password`。
+ * 解密在 normalizeWorkflow **之前**做 —— 否则空 name 的记录会用密文
+ * 去 buildLabel，标签里就会出现一串 base64 乱码。
+ * 旧数据无 `enc:` 前缀 → codec.open 原样返回（向后兼容旧明文）。
+ */
+function openStoredWorkflow(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const r = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...r };
+  if (typeof r.anchorPassword === 'string') out.anchorPassword = secretCodec.open(r.anchorPassword);
+  if (Array.isArray(r.steps)) {
+    out.steps = (r.steps as unknown[]).map((s) => {
+      if (!s || typeof s !== 'object') return s;
+      const st = s as Record<string, unknown>;
+      return typeof st.password === 'string' ? { ...st, password: secretCodec.open(st.password) } : st;
+    });
+  }
+  return out;
+}
+
+/**
+ * 把内存中的明文 Workflow 转成落盘形态（修复 P0-②）。
+ * 导出包（workflowPack.exportPack）**不走这里**，仍保持明文 ——
+ * 锚点密码就是卡片身份，导出前已有明确警告对话框。
+ */
+function sealWorkflow(w: Workflow): Record<string, unknown> {
+  return {
+    ...w,
+    anchorPassword: secretCodec.seal(w.anchorPassword ?? ''),
+    steps: (w.steps ?? []).map((s) => ({ ...s, password: secretCodec.seal(s.password ?? '') }))
+  };
+}
+
 export function loadWorkflows(): Workflow[] {
   try {
     if (fs.existsSync(file())) {
       const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
       if (Array.isArray(raw)) {
-        return raw.map(normalizeWorkflow).filter(Boolean) as Workflow[];
+        return raw
+          .map((r) => normalizeWorkflow(openStoredWorkflow(r) as Partial<Workflow> & Record<string, unknown>))
+          .filter(Boolean) as Workflow[];
       }
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    logger.warn(`读取工作流失败，已按空处理：${e instanceof Error ? e.message : String(e)}`);
   }
   return [];
 }
@@ -496,9 +613,9 @@ export function loadWorkflows(): Workflow[] {
 export function saveWorkflows(list: Workflow[]): void {
   try {
     fs.mkdirSync(userDataDir(), { recursive: true });
-    fs.writeFileSync(file(), JSON.stringify(list, null, 2), 'utf8');
-  } catch {
-    /* ignore */
+    fs.writeFileSync(file(), JSON.stringify(list.map(sealWorkflow), null, 2), 'utf8');
+  } catch (e) {
+    logger.warn(`写入工作流失败：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

@@ -1,0 +1,68 @@
+
+7-Zip 26.02 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+
+Scanning the drive for archives:
+1 file, 400 bytes (1 KiB)
+
+Listing archive: C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C03-multi-zip\C03-multi.zip
+
+--
+Path = C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C03-multi-zip\C03-multi.zip
+Type = zip
+Physical Size = 400
+
+----------
+Path = x.txt
+Folder = -
+Size = 4
+Packed Size = 4
+Modified = 2026-10-07 10:12:35.4734551
+Created = 
+Accessed = 
+Attributes = A
+Encrypted = -
+Comment = 
+CRC = D21E7467
+Method = Store
+Characteristics = NTFS
+Host OS = FAT
+Version = 10
+Volume Index = 0
+Offset = 0
+
+Path = y.txt
+Folder = -
+Size = 4
+Packed Size = 4
+Modified = 2026-10-07 10:12:35.4759810
+Created = 
+Accessed = 
+Attributes = A
+Encrypted = -
+Comment = 
+CRC = 727B4874
+Method = Store
+Characteristics = NTFS
+Host OS = FAT
+Version = 10
+Volume Index = 0
+Offset = 39
+
+Path = z.txt
+Folder = -
+Size = 4
+Packed Size = 4
+Modified = 2026-10-07 10:12:35.4784925
+Created = 
+Accessed = 
+Attributes = A
+Encrypted = -
+Comment = 
+CRC = 49A50A00
+Method = Store
+Characteristics = NTFS
+Host OS = FAT
+Version = 10
+Volume Index = 0
+Offset = 78
+

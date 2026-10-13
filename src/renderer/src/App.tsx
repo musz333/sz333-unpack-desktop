@@ -6,7 +6,7 @@ import { Workspace } from './components/Workspace';
 import { ArchiveDetail } from './components/ArchiveDetail';
 import { WorkflowsView } from './components/WorkflowsView';
 import { HistoryView } from './components/HistoryView';
-import { PasswordDialog, SettingsDialog, Toasts } from './components/Dialogs';
+import { DuplicatePromptDialog, PasswordDialog, SettingsDialog, Toasts } from './components/Dialogs';
 import { FirstRunWizard } from './components/FirstRunWizard';
 import { Button } from './components/ui';
 
@@ -137,6 +137,7 @@ export default function App() {
         onClose={() => setWizardOpen(false)}
       />
       <PasswordDialog />
+      <DuplicatePromptDialog />
       <Toasts />
     </div>
   );

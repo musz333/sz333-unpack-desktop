@@ -1,0 +1,20 @@
+{
+    "id":  "C01-multi-7z",
+    "dir":  "C:\\Users\\zk\\Desktop\\交付-v1.0.6\\release-1.0.7\\sz333-unpack-1.0.7-src\\test-corpus\\C01-multi-7z",
+    "baselineOk":  true,
+    "title":  "多文件 7z（4 文件，无目录）",
+    "format":  "7z",
+    "actual":  {
+                   "dirs":  0,
+                   "files":  4,
+                   "encrypted":  false,
+                   "entries":  4,
+                   "code":  0,
+                   "listOk":  true,
+                   "format":  "7z"
+               },
+    "archive":  "C01-multi.7z",
+    "goal":  "P0-2：解析必须得到 4 个文件条目，且不含\"压缩包自身\"",
+    "encrypted":  false,
+    "password":  ""
+}

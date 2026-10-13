@@ -28,8 +28,8 @@ npm run dist:portable     # 只出便携版（体积更小、不写注册表）
 
 | 文件 | 说明 |
 | --- | --- |
-| `sz333 解压工具-1.0.5-x64-setup.exe` | NSIS 安装包（可选安装目录、创建快捷方式） |
-| `sz333 解压工具-1.0.5-便携版.exe` | 免安装便携版，双击即用 |
+| `sz333 解压工具-2.0.1-x64-setup.exe` | NSIS 安装包（可选安装目录、创建快捷方式） |
+| `sz333 解压工具-2.0.1-便携版.exe` | 免安装便携版，双击即用 |
 
 > 也可以直接从 GitHub Releases 下载现成 exe（无需自行编译）：
 > https://github.com/musz333/sz333-unpack-desktop/releases
@@ -90,7 +90,8 @@ sz333-unpack-desktop/
 - **主进程**负责一切系统能力：文件读写、调用 `7z.exe`、设置与历史落盘。
 - **渲染进程**只做 UI，通过 `window.api.*` 调用；不含 Node 能力。
 - **preload** 用 `contextBridge` 暴露**白名单方法**，不透传 `ipcRenderer`。
-- 窗口强制 `contextIsolation: true`、`nodeIntegration: false`；`index.html` 带 CSP，禁止外部脚本。
+- 窗口强制 `contextIsolation: true`、`nodeIntegration: false`、**`sandbox: true`**（渲染进程运行在 Chromium 沙箱内；preload 仅使用沙箱下仍可用的 `contextBridge` / `ipcRenderer` / `webUtils`，不引入 `fs`/`path` 等 Node 内置模块）。
+- `index.html` 带严格 CSP：`default-src 'self'`、`script-src 'self'`，并额外收紧 `object-src 'none'` / `base-uri 'none'` / `frame-ancestors 'none'`（禁外部脚本、禁对象嵌入、禁被页面内嵌）。
 - 拖拽取路径使用 `webUtils.getPathForFile()`（Electron 高版本已移除 `File.path`）。
 
 ### 7-Zip 引擎
@@ -111,22 +112,22 @@ sz333-unpack-desktop/
 | 拖拽添加 | 拖到窗口任意位置即可；分卷（`.part1` / `.001` / `.z01` / `.r00`）自动归为一组 |
 | 魔数识别 | 不信任扩展名，按文件头判断真实格式（伪装成 `.JPG` 的包也能识别） |
 | **循环解压（套娃）** | 沿着链路**逐层剥到最内层**，最多 **16** 层；每层产物落在 `资源名_L1` / `_L2`…，最里层内容最后挪到输出目录根。层数、每层解出什么、用了哪个密码都写进任务日志；工作流卡片会记录**完整多层链路**（如 `.001 → .JPG → .zip`）。内层加密包密码不对时提示补充密码，输对后**从内层包继续**，不会把外层大分卷重解一遍 |
-| **APK 过滤（可选）** | 默认关闭。开启后：① 解压产物里的 `.apk` 一律剔除；② 若**单个 apk** 占整包解出体积达到阈值（默认 **70%**，可调），判定这个包只是个 apk 外壳，连整份产物一起删掉。删的是**解压产物**，不碰源压缩包（源包去留由「源文件处理」单独决定）。<br>另外：套娃解压**不会**把 `.apk` 当作下一层去剥（与上面的开关无关）——apk 是终端产物不是套娃外壳，所以它只会**原样留在产物里**（关）或被**剔除**（开），绝不会被解开成一堆散文件。你直接拖入的 `.apk` 不受影响，仍会照常解压 |
+| **APK 过滤（可选）** | 默认关闭。开启后：① 解压产物里的 `.apk` 一律剔除；② 若**单个 apk** 占整包解出体积达到阈值（默认 **70%**，可调），判定这个包只是个 apk 外壳，连整份产物一起删掉。删的是**解压产物**，不碰源压缩包（源包去留由「源文件处理」单独决定）。<br>另外：套娃解压**不会**把 `.apk` 当作下一层去剥（与上面的开关无关）——apk 是终端产物不是套娃外壳，所以它只会**原样留在产物里**（关）或被**剔除**（开），绝不会被解开成一堆散文件。你直接拖入的 `.apk` 不受影响，仍会照常解压。<br>**安全边界**：只有输出目录是「按包名自建的目录」时才会删整份产物；若输出到**你自己指定的目录**，则跳过「删整份产物」这一步，只剔除 apk 并如实提示（避免误删该目录里的其它文件） |
 | 压缩包详情 | 格式、文件数、解压后大小、压缩率、是否加密、分卷数 |
 | 文件预览 | 解析 `7z l -slt` 输出，支持关键字筛选、仅文件/含目录切换 |
 | 任务队列 | 多任务、并发 1/2/4、实时进度（解析 `7z -bsp1` 输出）、当前处理文件 |
-| 暂停 / 取消 / 重试 | 取消立即终止 7z 进程并清理未完成输出；暂停后可恢复（Windows 无法挂起外部进程，恢复会重新开始，UI 已注明） |
+| 暂停 / 取消 / 重试 | 取消立即终止 7z 进程并清理未完成输出（**只清理按包名自建的目录；你指定的输出目录一律原样保留**，并在任务日志中说明）；暂停后可恢复（Windows 无法挂起外部进程，恢复会重新开始，UI 已注明）；**正在等待输出目录锁的任务同样可以被取消 / 移除** —— 不会残留"幽灵任务"，也不会把同目录的后续任务卡死 |
 | 加密包 | 自动探测加密 → 弹出密码输入 → 用新密码重试；可记住常用密码自动尝试 |
 | 覆盖策略 | 自动改名（默认）/ 覆盖 / 跳过，映射为 7-Zip 的 `-aou/-aoa/-aos` |
 | **重复包自动剔除** | 同名 + **逐分卷大小完全一致**即判为同一份，只保留一份；带 `(1)` / `（2）` / `_1` / `- 副本` 的会被识别为同一包。只看文件大小、不读内容（几十 GB 的包算哈希太慢）。**剔除只作用于待处理清单，不会删除硬盘文件**；同名但大小不同则两份都留并标黄提示 |
 | **任务完成后自动收起** | 成功任务完成后停留 8 秒再从队列移出（留出点【打开】【定位】的时间）；**失败 / 取消 / 待输入密码的任务常驻**，方便排查。可在设置里关掉 |
 | **中文路径转英文** | 老资源包（GBK 时代打包、老式编码）解压到中文路径常会乱码/失败。可选「自动 / 始终 / 关闭」：开启时中文目录名与包内中文文件名会被替换为 ASCII 名，并逐条写入任务日志（原名 → 新名）便于对照。**路径总长受 240 字符预算约束**：超出时会自动截短长段并补短哈希——中文 ASCII 化后每个字膨胀成 9 个字符，深层嵌套路径极易撑破 Windows 的 260 上限 |
-| **源文件处理** | 两态：保留原始文件 / **彻底删除（默认）**。大体积资源进回收站会白占空间，故不提供回收站方案；处理失败或取消的分组永不删源文件 |
+| **源文件处理** | 两态：**保留原始文件（默认）** / 彻底删除。默认保留以免误删；切到「彻底删除」后会在删除前二次确认。大体积资源进回收站会白占空间，故不提供回收站方案；处理失败或取消的分组永不删源文件 |
 | **首次使用引导** | 首次启动自动弹出 4 步引导（源文件处理 / 中文路径 / 输出目录 / 并发数），每步写明「以后在设置哪一项改」；设置页底部有【重新查看首次运行引导】常驻入口 |
 | **工作流卡片** |  **以「该来源第一层命中的解压密码」为锚点记住整条解压链路**；同源包直接按链路解压，跳过探测与密码试错。卡片显示状态 / 锚点密码 / 链路 / 指纹 / 战绩（命中·连续失败·最近使用），支持卡片与列表视图切换 |
 | **批量导出 / 导入** | 卡片可批量导出为 JSON 卡片包，导入时先出预览清单（新增 / 同锚点冲突 / 低置信 / 无锚点跳过）并逐条勾选；冲突默认保留本地，可选"用导入覆盖"（只换链路、保留本地战绩）。支持 v1.9（WinForms 版）导出的卡片包 |
 | 历史记录 | 落盘保存，可搜索、一键清空、直接打开输出位置 |
-| 设置 | 默认输出目录、主题（跟随系统/浅色/深色）、并发数、源文件处理（保留/彻底删除）、中文路径策略、重复包策略、APK 过滤（开关+阈值）、任务收起、通知、记住密码 |
+| 设置 | **输出位置（源文件所在目录 / 指定目录）**、主题（跟随系统/浅色/深色）、并发数、源文件处理（保留/彻底删除）、中文路径策略、重复包策略、APK 过滤（开关+阈值）、任务收起、通知、记住密码 |
 | 快捷键 | `Ctrl+O` 添加压缩包；菜单内提供缩放、全屏、开发者工具等标准项 |
 
 ---
@@ -140,7 +141,7 @@ sz333-unpack-desktop/
 - **阴影**：仅设置弹窗与 Toast 使用，且极淡（`shadow-pop` / `shadow-toast`）；其余层级全部由 1px 低对比边框建立。
 - **状态**：默认 / 悬停 / 按下 / 禁用 / 加载 / 成功 / 失败 均有明确视觉反馈；进度条按语义变色。
 - **动效**：150–240ms 缓出，仅用于列表出现、弹窗、Toast、进度；**遵守 `prefers-reduced-motion`**（全局降级为 0.001ms）。
-- **响应式**：360px–2560px。≥1180px 三栏（侧栏 + 主区 + 详情）；<1180px 隐藏详情；<900px 收起导航文字与侧栏并改为抽屉，核心解压流程始终可用。
+- **响应式**：桌面应用，**窗口最小宽度 880px**（主进程 `minWidth: 880` / `minHeight: 600`，见 `src/main/index.ts`），不面向手机窄屏。断点：≥1180px 三栏（侧栏 + 主区 + 详情）；<1180px 隐藏详情；<900px 收起导航文字与侧栏并改为抽屉，核心解压流程始终可用。
 - **可访问性**：语义标签（`header/nav/aside/section/dl`）、`aria-current` / `aria-checked` / `aria-modal` / `aria-live`、全部图标按钮带 `aria-label`、可见焦点环、键盘可达（Tab / Enter / 空格）、对比度满足 WCAG AA。
 
 ---
@@ -171,7 +172,7 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://registry.npmmirror.com/-/binary
 npm run dist
 ```
 
-**杀毒软件误报？** 未签名的 Electron 打包产物常见误报，属误判；正式分发建议购买代码签名证书。
+**未签名 & 杀毒软件误报？** 本仓库打包配置**不含代码签名**（未配置证书），产物为**未签名 exe**，因此 Windows SmartScreen 会提示「未知发布者」，杀毒软件也常见误报——这些均属误判，并非程序有害。**正式对外分发建议购买代码签名证书**（OV/EV），并在 `electron-builder.config.js` 的 `win` 段补充 `certificateFile` / `certificatePassword`（或改用云签名服务），以消除「未知发布者」提示并大幅降低误报率。详见 `electron-builder.config.js` 顶部说明。
 
 **只想出便携版？** `npm run dist:portable`。
 
@@ -179,24 +180,42 @@ npm run dist
 
 ## 开发期验证工具
 
-仓库内附两个探针脚本，用于在无人值守环境下验证 UI 与引擎链路：
+`scripts/probe-entry.cjs` 是统一入口。它按优先级加载**真实主进程**并打印实际加载路径：
+
+1. `process.resourcesPath/app.asar/out/main/index.js` → **真·打包态**（用户实际运行的字节）
+2. `process.resourcesPath/app/out/main/index.js` → 解包台架
+3. `__dirname/../out/main/index.js` → 开发构建（会打印醒目警告：**结果不代表交付产物**）
 
 ```powershell
-# 走真实主进程 + 真实 IPC + 真实 7z，截图到 shot-light.png / shot-dark.png
-# （--extract 会真实跑一次解压并打印输出文件清单）
-$env:SZ333_RESOURCES = (Resolve-Path resources).Path
-node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --probe light --extract
-node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --probe dark
+# 清除可能被 CI 注入的开关（否则 electron 退化为纯 Node、app 为 undefined）
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 
-# 工作流闭环验证：解压两批同源包 → 自动生成卡片 → 第二批命中
-node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --wf light
+# ---- 带硬断言的套件（失败会 app.exit(非 0)，并打印「通过 N 项，失败 0 项」）----
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --layers   # 39 条断言
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --scan     # 14 条断言
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --cjk      # 8 条断言（中文路径纯 ASCII + 源文件策略 keep/delete）
+node scripts\verify-dedup.mjs                                             # 29 条断言（重复包判定，走真实实现）
+node --experimental-strip-types scripts\verify-fixes.mts                  # 70 条断言（加载真实源码模块做行为断言）
+node --experimental-strip-types scripts\verify-pwd-e2e.mts               # 14 条断言（用仓库内 7z.exe 做真实解压 E2E）
+node --experimental-strip-types scripts\verify-syntax.mts                # 12 条断言（括号配平 + node --check）
+
+# ---- 记录性套件（**零硬断言**，只有日志/截图，仅供人工核对，不能当"已验证"）----
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --wizard   # 引导页截图
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --wf light # 工作流闭环日志
+node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --probe light --extract  # UI 截图 + 一次真实解压
 ```
 
-> 注意：probe-entry 必须是 Electron 的**入口文件**（Electron 只在加载入口时引导内置模块）。
+> **诚实标注**：上表 `--wizard` / `--wf` / `--probe` 三个套件**没有任何硬断言**，只产出
+> 日志/截图，请勿据此声称"已验证"。只有 `--layers` / `--scan` / `--cjk` / `verify-dedup.mjs`
+> / `verify-fixes.mts` / `verify-pwd-e2e.mts` / `verify-syntax.mts`
+> 会在失败时给出非 0 退出码与「失败 0 项」结论。
 >
-> 另外：若环境变量里存在 `ELECTRON_RUN_AS_NODE=1`（某些 CI/harness 会注入），
-> Electron 会退化为纯 Node 运行、`require('electron').app` 为 undefined。运行前请清除：
-> `Remove-Item Env:ELECTRON_RUN_AS_NODE`
+> 上述带硬断言的套件均已纳入 CI（`.github/workflows/ci.yml`），失败即阻断合并。
+> `scripts/verify-listing.mjs` 依赖 `test-corpus/`（未入库、需 `make-test-corpus.ps1` 重建），
+> 属「旧实现 vs 新实现」基线对照，暂未纳入 CI。
+
+> 注意：probe-entry 必须是 Electron 的**入口文件**（Electron 只在加载入口时引导内置模块）；
+> 若环境变量里存在 `ELECTRON_RUN_AS_NODE=1`，Electron 会退化为纯 Node，请先清除（见上）。
 
 **运行日志**：程序启动时会把引擎定位结果写入 `%APPDATA%\sz333-unpack-desktop\app.log`，
 设置页「关于」区块也提供 **7-Zip 引擎状态 + 重新检测**，方便用户自查。
@@ -205,6 +224,8 @@ node_modules\electron\dist\electron.exe scripts\probe-entry.cjs --wf light
 
 ## 许可证
 
-MIT License · 完全免费 · 如通过购买获得请立即退款 · 无需赞赏，愿天下开源
+MIT License · 完全免费 · 无需赞赏，愿天下开源（全文见仓库根目录 [`LICENSE`](./LICENSE)）
+
+> 内嵌的 7-Zip 引擎（`7z.exe` / `7z.dll`）为第三方组件，许可声明见 [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md)。
 
 > 请仅用于处理你自己拥有的压缩包，勿用于破解他人付费作品或绕过他人设置的保护。

@@ -29,9 +29,9 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activeCount = tasks.filter((t) => t.status === 'running' || t.status === 'queued').length;
 
   return (
-    <header className="flex h-13 shrink-0 items-center gap-4 border-b border-line bg-ink-0 px-4" style={{ height: 52 }}>
+    <header className="flex shrink-0 items-center gap-4 border-b border-line bg-ink-0 px-4" style={{ height: 52 }}>
       <div className="flex items-center gap-2.5 pr-4" style={{ borderRight: wide ? '1px solid rgb(var(--c-border))' : 'none' }}>
-        <span className="grid h-7 w-7 place-items-center rounded-btn bg-brand text-white">
+        <span className="grid h-7 w-7 place-items-center rounded-btn bg-brand text-on-accent">
           <Icon name="package" size={16} />
         </span>
         <div className="leading-tight">
@@ -58,7 +58,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
               <Icon name={n.icon} size={16} />
               {wide ? <span>{n.label}</span> : null}
               {n.key === 'extract' && activeCount > 0 ? (
-                <span className="mono-num ml-0.5 rounded-full bg-brand px-1.5 text-xs text-white">{activeCount}</span>
+                <span className="mono-num ml-0.5 rounded-full bg-brand px-1.5 text-xs text-on-accent">{activeCount}</span>
               ) : null}
             </button>
           );

@@ -1,7 +1,7 @@
 {
   "name": "sz333-unpack-desktop",
   "productName": "sz333 解压工具",
-  "version": "1.0.5",
+  "version": "2.0.1",
   "description": "Windows 桌面解压工具：分卷合并 / 多层嵌套 / 加密包 / 密码锚点工作流 / 中文路径转英文",
   "author": {
     "name": "sz333",
@@ -9,6 +9,9 @@
   },
   "license": "MIT",
   "private": true,
+  "engines": {
+    "node": ">=22.6"
+  },
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -17,10 +20,14 @@
     "dist": "npm run build && electron-builder --win nsis portable",
     "dist:portable": "npm run build && electron-builder --win portable",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "verify:fixes": "node --experimental-strip-types scripts/verify-fixes.mts",
+    "verify:pwd-e2e": "node --experimental-strip-types scripts/verify-pwd-e2e.mts",
+    "verify:dedup": "node scripts/verify-dedup.mjs",
+    "verify:listing": "node scripts/verify-listing.mjs",
+    "verify:syntax": "node --experimental-strip-types scripts/verify-syntax.mts",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "framer-motion": "^11.3.24",
     "lucide-react": "^0.436.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

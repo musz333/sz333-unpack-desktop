@@ -23,6 +23,11 @@ export function ArchiveDetail() {
     return filtered.filter((e) => e.path.toLowerCase().includes(q));
   }, [cache?.info?.entries, query, onlyFiles]);
 
+  // 修复 P1-②：预览最多渲染 200 条；超出时必须明确告知，避免"静默截断"。
+  const PREVIEW_LIMIT = 200;
+  const visible = entries.slice(0, PREVIEW_LIMIT);
+  const overflow = entries.length - visible.length;
+
   if (!pack) {
     return (
       <>
@@ -155,7 +160,7 @@ export function ArchiveDetail() {
             <EmptyState icon="file" title="没有匹配的文件" desc={query ? '换个关键词试试' : '该压缩包没有文件条目'} />
           ) : (
             <ul className="flex flex-col gap-px overflow-hidden rounded-card border border-line">
-              {entries.slice(0, 200).map((e, i) => (
+              {visible.map((e, i) => (
                 <li
                   key={`${e.path}-${i}`}
                   className={[
@@ -164,7 +169,7 @@ export function ArchiveDetail() {
                   ].join(' ')}
                 >
                   <Icon name={e.isDir ? 'folder-archive' : 'file'} size={16} className="shrink-0 text-fg-faint" />
-                  <span className="min-w-0 flex-1 truncate" title={e.path}>
+                  <span className="selectable min-w-0 flex-1 truncate" title={e.path}>
                     {e.path}
                   </span>
                   {e.encrypted ? <Icon name="lock" size={16} className="shrink-0 text-warn" /> : null}
@@ -174,8 +179,14 @@ export function ArchiveDetail() {
             </ul>
           )}
 
-          {cache?.info?.truncated ? (
-            <p className="mt-2 text-xs text-fg-faint">条目过多，仅显示前 {cache.info.entries.length} 条</p>
+          {overflow > 0 ? (
+            <p className="mt-2 text-xs text-fg-faint">
+              仅显示前 {visible.length} 条，另有 {overflow} 条未显示；可用上方筛选缩小范围
+            </p>
+          ) : cache?.info?.truncated ? (
+            <p className="mt-2 text-xs text-fg-faint">
+              条目过多，仅载入前 {cache.info.entries.length} 条 / 共 {cache.info.fileCount} 条
+            </p>
           ) : null}
         </div>
       </div>

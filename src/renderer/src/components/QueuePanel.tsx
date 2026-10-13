@@ -54,13 +54,13 @@ function TaskCard({ task }: { task: TaskRecord }) {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium" title={task.label}>
+            <p className="selectable truncate text-sm font-medium" title={task.label}>
               {task.label}
             </p>
             <span className="shrink-0 text-xs text-fg-faint">{STATUS_TEXT[task.status]}</span>
           </div>
 
-          <p className="mt-0.5 truncate text-xs text-fg-muted">
+          <p className="selectable mt-0.5 truncate text-xs text-fg-muted">
             {task.status === 'done'
               ? `${task.fileCount ? `${task.fileCount} 个文件 · ` : ''}${fmtSize(task.outputSize)} · ${fmtDuration(task.startedAt, task.endedAt)}`
               : task.status === 'failed' || task.status === 'needs-password'
@@ -164,7 +164,7 @@ export function QueuePanel() {
 
         {finished > 0 ? (
           <Button size="sm" variant="ghost" icon="trash" onClick={clearFinished} className="mt-auto">
-            清除失败/已取消（{finished}）
+            清除已完成/失败/取消（{finished}）
           </Button>
         ) : null}
       </div>

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { CH } from '@shared/types';
-import type { DesktopApi, TaskRecord, AppSettings, ArchiveInfo, PackItem, Result, ArchiveFormat, ThemeMode } from '@shared/types';
+import type { DesktopApi, TaskRecord, AppSettings, ArchiveInfo, Result } from '@shared/types';
 
 const api: DesktopApi = {
   pickArchives: () => ipcRenderer.invoke(CH.pickArchives),
@@ -27,6 +27,8 @@ const api: DesktopApi = {
   cancelTask: (id: string) => ipcRenderer.invoke(CH.taskCancel, id),
   retryTask: (id: string, password?: string, outDir?: string) => ipcRenderer.invoke(CH.taskRetry, id, password, outDir),
   removeTask: (id: string) => ipcRenderer.invoke(CH.taskRemove, id),
+  // 清空已完成/失败/已取消的任务（对应主进程 task:clear-finished）
+  clearFinishedTasks: () => ipcRenderer.invoke(CH.taskClearFinished),
 
   engineSelfCheck: () => ipcRenderer.invoke('engine:selfcheck'),
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -39,7 +41,6 @@ const api: DesktopApi = {
   revealPath: (p: string) => ipcRenderer.invoke(CH.revealPath, p),
   openPath: (p: string) => ipcRenderer.invoke(CH.openPath, p),
   openExternal: (url: string) => ipcRenderer.invoke(CH.openExternal, url),
-  windowAction: (action) => ipcRenderer.invoke(CH.minimizable, action),
 
   onTask: (cb: (task: TaskRecord) => void) => {
     const h = (_e: unknown, t: TaskRecord) => cb(t);
@@ -67,11 +68,6 @@ const api: DesktopApi = {
     const h = (_e: unknown, t: { kind: 'ok' | 'warn' | 'bad' | 'info'; title: string; desc?: string }) => cb(t);
     ipcRenderer.on(CH.evToast, h);
     return () => ipcRenderer.removeListener(CH.evToast, h);
-  },
-  onTheme: (cb: (mode: ThemeMode) => void) => {
-    const h = (_e: unknown, m: ThemeMode) => cb(m);
-    ipcRenderer.on(CH.evTheme, h);
-    return () => ipcRenderer.removeListener(CH.evTheme, h);
   },
 
   // Electron 高版本已移除 File.path，必须通过 webUtils 取真实路径

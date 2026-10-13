@@ -4,6 +4,9 @@ out/
 release/
 dist/
 
+# 测试语料（由 scripts/make-test-corpus.ps1 生成，可随时重建）
+test-corpus/
+
 # 本机配置
 *.local
 .env

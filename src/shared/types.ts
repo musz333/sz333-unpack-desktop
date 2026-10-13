@@ -72,6 +72,10 @@ export interface ArchiveInfo {
   entries: ArchiveEntry[];
   /** 条目过多时只回传前 N 条 */
   truncated: boolean;
+  /** totalSize / packedSize 是否可信。
+   *  当 `7z l -slt` 的输出超过 run7z 的 8MB 上限被截断时，累加值会漏掉前段条目
+   *  （超大归档会被严重低估），此时为 false → 磁盘预检必须走保守分支。 */
+  sizeEstimateReliable: boolean;
   passwordRequired?: boolean;
 }
 
@@ -131,6 +135,13 @@ export type OverwritePolicy = 'overwrite' | 'skip' | 'rename';
 /** 源文件处理策略：保留 / 彻底删除 */
 export type SourcePolicy = 'keep' | 'delete';
 
+/**
+ * 输出位置策略：
+ *   'source' = 源文件所在目录（默认；与 B 线 v1.9 的 UseSource=true 语义一致）
+ *   'custom' = 用户指定的目录（defaultOutDir；为空时不静默，明确提示后回落到源目录）
+ */
+export type OutDirPolicy = 'source' | 'custom';
+
 /** 中文路径策略：auto = 仅在需要时自动转英文 / force = 始终转英文 / off = 保持原样 */
 export type NonAsciiPolicy = 'auto' | 'force' | 'off';
 
@@ -142,13 +153,13 @@ export type AutoCollapsePolicy = 'on' | 'off';
 
 export interface AppSettings {
   theme: ThemeMode;
-  language: 'zh-CN' | 'en-US';
+  /** 显式输出位置：源文件所在目录（默认）/ 指定目录 */
+  outDirPolicy: OutDirPolicy;
   defaultOutDir: string;
   /** 解压到「源文件所在目录 / 以包名新建子目录」 */
   extractToSubfolder: boolean;
   overwrite: OverwritePolicy;
-  keepDirStructure: boolean;
-  /** 源文件处理：保留 / 彻底删除（默认；回收站方案已按用户要求取消——大体积资源会占满回收站） */
+  /** 源文件处理：保留 / 彻底删除（默认彻底删除，作者明确要求）；回收站方案已按用户要求取消——大体积资源会占满回收站 */
   sourcePolicy: SourcePolicy;
   /** 中文路径策略：auto（默认，输出目录含中文时自动换英文目录并改包内中文名）/ force / off */
   nonAsciiPolicy: NonAsciiPolicy;
@@ -175,19 +186,38 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
-  language: 'zh-CN',
+  outDirPolicy: 'source',
   defaultOutDir: '',
   extractToSubfolder: true,
   overwrite: 'rename',
-  keepDirStructure: true,
-  sourcePolicy: 'delete',
+  /**
+   * 源文件处理：保留 / 彻底删除。
+   * 默认 **保留** —— 删除不可恢复（不进回收站），破坏性操作不应作为默认值。
+   * 需要"解压后清源"的用户在首次引导或设置里显式切换为「彻底删除」即可；
+   * 切换后 `tasks.ts` 在真正删除**之前**仍会写披露日志并弹二次确认，破坏性动作始终可感知。
+   * 注意：老用户已持久化的值仍然生效（index.ts 用 { ...DEFAULT_SETTINGS, ...raw } 合并），
+   * 本次**不做迁移** —— 尊重用户既有选择，只有新装才拿到新默认值。
+   */
+  sourcePolicy: 'keep',
   nonAsciiPolicy: 'auto',
   dupPolicy: 'silent',
   autoCollapseDone: 'on',
   maxConcurrent: 1,
   notifyOnFinish: true,
   autoOpenOutDir: false,
-  rememberPasswords: false,
+  /**
+   * 记住解压密码。
+   *
+   * **修复 P0-①（工作流冷启动）**：默认由 false 改为 **true**。
+   * 工作流匹配要求"锚点密码 ∈ 用户密码列表"才算命中（见 workflows.ts 规则①），
+   * 而密码列表只在 rememberPasswords=true 时才会被写入。默认 false 时列表恒为空，
+   * 卡片虽然照常生成，却永远拿不到 45 分锚点分（仅指纹+名称最多 ~38 < 阈值 45），
+   * **旗舰功能形同虚设、永不自动命中**。
+   *
+   * 落盘形态已加密（DPAPI，见 index.ts 的 safeStorage 处理），因此"记住密码"
+   * 不再等于明文落盘；这是把它默认打开的前提。
+   */
+  rememberPasswords: true,
   apkFilterEnabled: false,
   apkDropThreshold: 70,
   wfView: 'card',
@@ -223,15 +253,15 @@ export const CH = {
   taskCancel: 'task:cancel',
   taskRetry: 'task:retry',
   taskRemove: 'task:remove',
+  /** 清空已完成/失败/已取消的任务（修复 P2-⑩：clearFinished 此前是死代码，无 IPC 入口） */
+  taskClearFinished: 'task:clear-finished',
   // 系统
   revealPath: 'sys:reveal',
   openPath: 'sys:open',
   openExternal: 'sys:open-external',
-  minimizable: 'sys:win',
   // 主 → 渲染 事件
   evTask: 'ev:task',
-  evToast: 'ev:toast',
-  evTheme: 'ev:theme'
+  evToast: 'ev:toast'
 } as const;
 
 /** 工作流卡片（渲染层视图模型） */
@@ -323,11 +353,12 @@ export interface DesktopApi {
   cancelTask(id: string): Promise<boolean>;
   retryTask(id: string, password?: string, outDir?: string): Promise<TaskRecord | null>;
   removeTask(id: string): Promise<boolean>;
+  /** 清空所有已完成/失败/已取消的任务，返回清掉的条数（主进程 task:clear-finished） */
+  clearFinishedTasks(): Promise<number>;
 
   revealPath(p: string): Promise<void>;
   openPath(p: string): Promise<void>;
   openExternal(url: string): Promise<void>;
-  windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<void>;
 
   /** 标记首次引导已完成 */
   markFirstRunDone(): Promise<boolean>;
@@ -356,7 +387,6 @@ export interface DesktopApi {
     conflicts: number;
   }) => void): () => void;
   onToast(cb: (t: { kind: 'ok' | 'warn' | 'bad' | 'info'; title: string; desc?: string }) => void): () => void;
-  onTheme(cb: (mode: ThemeMode) => void): () => void;
 
   /** 拖拽文件取真实路径（Electron 中 File.path 已被移除，必须走此桥） */
   pathForFile(file: File): string;

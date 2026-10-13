@@ -1,0 +1,37 @@
+{
+  "$comment": "已发布资产的 SHA-256 留底（防「交付物落后于源码」/ 被掉包）。CI 断言见 scripts/ci-assert-release-assets.mjs。",
+  "version": "2.0.1",
+  "generatedAt": "2026-10-10T02:42:34.730Z",
+  "buildKind": "green-directory + portable (esbuild-wasm + @electron/asar + NSIS 3.04)",
+  "assets": [
+    {
+      "file": "bin/sz333 解压工具.exe",
+      "sha256": "1fa93c3471c11dc8128998c662c705104e4528b98901b61c8a25216acda424c5",
+      "size": 180849664
+    },
+    {
+      "file": "sz333 解压工具-2.0.1-便携版.exe",
+      "sha256": "1678f9c38164db64ed409eb7e44d7a8a920de39b222e0495a504f38b956a4cd5",
+      "size": 73926698,
+      "note": "单文件便携版：NSIS 3.04 直接编译（绕开 Go 版 app-builder.exe），静默释放到 %TEMP%\\nsXXXX.tmp 后启动、退出即清理。"
+    }
+  ],
+  "bundle": {
+    "asar": "bin/resources/app.asar",
+    "sha256": "7d3301d2d2dc1dfa9e02524f5264c95459eb49a7c4be555284c37d85b28fb454",
+    "outFileCount": 5,
+    "outTreeSha256": "b88391b84eb9b983fe246fbfc168dc9c29e65dcc43a7b59f4263314b64d71ae4"
+  },
+  "resources": [
+    {
+      "file": "bin/resources/7z.exe",
+      "sha256": "83967f1b02b43c4efeda302795722c809e0e81b8307de73558d10484d5676a7d",
+      "size": 576000
+    },
+    {
+      "file": "bin/resources/7z.dll",
+      "sha256": "69fd4df057985c40e510e2fac182881c7f85e90aa13ec703f763a8fdb2ce61f8",
+      "size": 1906688
+    }
+  ]
+}

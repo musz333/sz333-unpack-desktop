@@ -1,0 +1,58 @@
+
+7-Zip 26.02 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+
+Scanning the drive for archives:
+1 file, 207 bytes (1 KiB)
+
+Listing archive: C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C02-multi-7z-dirs\C02-dirs.7z
+
+--
+Path = C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C02-multi-7z-dirs\C02-dirs.7z
+Type = 7z
+Physical Size = 207
+Headers Size = 191
+Method = LZMA2:12
+Solid = +
+Blocks = 1
+
+----------
+Path = docs
+Size = 0
+Packed Size = 0
+Modified = 2026-10-07 10:12:35.1866201
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = docs\sub
+Size = 0
+Packed Size = 0
+Modified = 2026-10-07 10:12:35.1886196
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = docs\readme.txt
+Size = 7
+Packed Size = 16
+Modified = 2026-10-07 10:12:35.1866201
+Attributes = A
+CRC = 16E490B3
+Encrypted = -
+Method = LZMA2:12
+Block = 0
+
+Path = docs\sub\note.txt
+Size = 5
+Packed Size = 
+Modified = 2026-10-07 10:12:35.1911217
+Attributes = A
+CRC = 28C26F14
+Encrypted = -
+Method = LZMA2:12
+Block = 0
+

@@ -1,0 +1,20 @@
+{
+    "id":  "C02-multi-7z-dirs",
+    "dir":  "C:\\Users\\zk\\Desktop\\交付-v1.0.6\\release-1.0.7\\sz333-unpack-1.0.7-src\\test-corpus\\C02-multi-7z-dirs",
+    "baselineOk":  true,
+    "title":  "多文件 7z（含目录条目）",
+    "format":  "7z",
+    "actual":  {
+                   "dirs":  2,
+                   "files":  2,
+                   "encrypted":  false,
+                   "entries":  4,
+                   "code":  0,
+                   "listOk":  true,
+                   "format":  "7z"
+               },
+    "archive":  "C02-dirs.7z",
+    "goal":  "P0-2：目录条目（Attributes=D）与文件条目都要解析出来",
+    "encrypted":  false,
+    "password":  ""
+}

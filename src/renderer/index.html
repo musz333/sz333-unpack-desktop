@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP 收紧（评审 P3）：
+        · object-src 'none'      —— 禁插件/对象嵌入（<object>/<embed>/<applet>）
+        · base-uri   'none'      —— 禁 <base> 改写相对 URL 基址（防注入后劫持脚本加载）
+        · frame-ancestors 'none' —— 禁被任何页面内嵌（防点击劫持）
+      以上三条与 dev/HMR 无关（不影响 script/style/connect），dev 与生产构建均可用。
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     />
     <title>sz333 解压工具</title>
   </head>

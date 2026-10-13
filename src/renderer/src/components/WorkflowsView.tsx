@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 import { Button, Chip, EmptyState, Switch } from './ui';
-import { fmtSize, fmtTime, ratio } from '../lib/format';
+import { fmtSize, fmtTime } from '../lib/format';
+import { useDialogA11y } from '../lib/useDialogA11y';
 import type { WorkflowCard } from '@shared/types';
 
 /* ==================================================================
@@ -15,6 +16,7 @@ function Card({ card, view }: { card: WorkflowCard; view: 'card' | 'list' }) {
   const exportOne = useStore((s) => s.workflowExport);
   const toast = useStore((s) => s.toast);
   const packs = useStore((s) => s.packs);
+  const selectedId = useStore((s) => s.selectedId);
   const startExtract = useStore((s) => s.startExtract);
 
   const accent = card.autoDisabled ? 'bad' : !card.enabled ? 'muted' : 'ok';
@@ -32,7 +34,8 @@ function Card({ card, view }: { card: WorkflowCard; view: 'card' | 'list' }) {
   /** 用这张卡解压：把锚点密码置顶，并解压当前选中的资源包 */
   const useCard = async () => {
     await apply(card.id);
-    const target = packs[0];
+    // 修复 P2-⑥：原实现恒取 packs[0]，忽略用户在「解压」页选中的包
+    const target = packs.find((p) => p.id === selectedId) ?? packs[0];
     if (!target) {
       toast('warn', '还没有可解压的资源包', '先在「解压」页添加压缩包，再回到这里点用这张卡解压');
       return;
@@ -144,6 +147,7 @@ function ImportDialog({ open, onClose }: { open: boolean; onClose: () => void })
   const applyImport = useStore((s) => s.workflowImportApply);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (preview) {
@@ -151,6 +155,9 @@ function ImportDialog({ open, onClose }: { open: boolean; onClose: () => void })
       setOverwrite(false);
     }
   }, [preview]);
+
+  // Esc 关闭 + 焦点锁 + 关闭后还原焦点
+  useDialogA11y(open && !!preview, dialogRef, onClose);
 
   if (!open || !preview) return null;
 
@@ -168,11 +175,13 @@ function ImportDialog({ open, onClose }: { open: boolean; onClose: () => void })
   return (
     <div className="fixed inset-0 z-40 grid animate-fade-in place-items-center bg-black/35 p-4" onClick={onClose}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="导入工作流卡片"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[min(720px,calc(100vh-64px))] w-[min(680px,100%)] animate-fade-up flex-col overflow-hidden rounded-panel border border-line bg-ink-0 shadow-pop"
+        className="flex max-h-[min(720px,calc(100vh-64px))] w-[min(680px,100%)] animate-fade-up flex-col overflow-hidden rounded-panel border border-line bg-ink-0 shadow-pop focus:outline-none"
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3.5">
           <Icon name="download" size={16} />
@@ -304,7 +313,7 @@ export function WorkflowsView() {
               <Button size="sm" icon="download" disabled={!cards.length} onClick={() => void exportCards()}>
                 批量导出
               </Button>
-              <Button size="sm" icon="upload" onClick={() => void openImport().then(() => setImportOpen(true))}>
+              <Button size="sm" icon="upload" onClick={() => void openImport().then((ok) => ok && setImportOpen(true))}>
                 批量导入
               </Button>
             </>
@@ -329,7 +338,7 @@ export function WorkflowsView() {
               title="还没有工作流卡片"
               desc="解压成功一次后会自动记住这条套路（锚点密码 + 链路 + 指纹），下次遇到同一来源就能一键跳过探测与密码试错。也可以从别人那里批量导入卡片包。"
               action={
-                <Button size="sm" icon="upload" onClick={() => void openImport().then(() => setImportOpen(true))}>
+                <Button size="sm" icon="upload" onClick={() => void openImport().then((ok) => ok && setImportOpen(true))}>
                   批量导入
                 </Button>
               }
@@ -383,7 +392,7 @@ export function WorkflowsView() {
                     }
                   />
                   <div className="min-w-0">
-                    <p className="text-xs leading-5 text-fg-muted">{l.text}</p>
+                    <p className="selectable whitespace-pre-line text-xs leading-5 text-fg-muted">{l.text}</p>
                     {l.anchorPassword ? <p className="mono-num mt-0.5 text-xs text-fg-faint">{l.anchorPassword}</p> : null}
                   </div>
                 </div>
@@ -404,5 +413,3 @@ export function WorkflowsView() {
     </section>
   );
 }
-
-export { ratio };

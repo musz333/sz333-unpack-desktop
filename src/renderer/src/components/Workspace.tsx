@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { Icon } from './Icon';
-import { Button, Chip, EmptyState } from './ui';
+import { Button, Chip } from './ui';
 import { fmtSize, shortPath } from '../lib/format';
 import type { PackItem } from '@shared/types';
 
@@ -20,6 +20,8 @@ export function Dropzone({ onPick }: { onPick: () => void }) {
       onDragLeave={() => setActive(false)}
       onDrop={(e) => {
         e.preventDefault();
+        // 阻止冒泡到 window 的全局 drop 监听，否则同一批文件会被 addPaths 处理两次
+        e.stopPropagation();
         setActive(false);
         const paths = Array.from(e.dataTransfer.files)
           .map((f) => window.api.pathForFile(f))
@@ -38,7 +40,7 @@ export function Dropzone({ onPick }: { onPick: () => void }) {
       aria-label="添加压缩包：点击选择或拖拽文件到此处"
       className={[
         'm-6 flex flex-1 cursor-pointer flex-col items-center justify-center gap-4 rounded-panel border border-dashed p-8 text-center',
-        'transition-all duration-180 ease-out',
+        'transition-all duration-base ease-out',
         active
           ? 'border-brand bg-brand-soft scale-[1.005]'
           : 'border-line-strong bg-ink-0 hover:border-brand hover:bg-brand-soft'
@@ -46,7 +48,7 @@ export function Dropzone({ onPick }: { onPick: () => void }) {
     >
       <span
         className={[
-          'grid h-12 w-12 place-items-center rounded-panel border transition-colors duration-180 ease-out',
+          'grid h-12 w-12 place-items-center rounded-panel border transition-colors duration-base ease-out',
           active ? 'border-brand-line bg-ink-0 text-brand' : 'border-line bg-ink-1 text-fg-muted'
         ].join(' ')}
       >
@@ -84,6 +86,17 @@ function PackRow({
   return (
     <li
       onClick={onSelect}
+      /* 键盘可达：li 承载"选中"这一交互，必须能 Tab 聚焦、Enter/Space 触发。
+         role="button" 让读屏器正确播报；aria-pressed 反映选中态。 */
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       className={[
         'grid cursor-pointer grid-cols-[auto_1fr_auto] items-center gap-3 rounded-card border p-3.5',
         'transition-colors duration-150 ease-out animate-fade-up',
@@ -100,7 +113,9 @@ function PackRow({
       </span>
 
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
+        {/* flex-wrap：最多可能同时渲染 6 个 Chip（格式/分卷数/不可解压/已合并/同名不同大小），
+            窄窗口下不换行会撑破卡片。 */}
+        <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-sm font-medium" title={pack.primary}>
             {pack.baseName}
           </p>
@@ -153,12 +168,15 @@ export function PackList({ onAdd, onPick }: { onAdd: () => void; onPick: () => v
   const clearPacks = useStore((s) => s.clearPacks);
   const startExtract = useStore((s) => s.startExtract);
   const startExtractFromSelection = useStore((s) => s.startExtractFromSelection);
+  const startExtractAll = useStore((s) => s.startExtractAll);
   const dedupePacks = useStore((s) => s.dedupePacks);
   const [active, setActive] = useState(false);
 
   const total = packs.reduce((s, p) => s + p.size, 0);
   /** 清单里被判定为"重复并被合并"的份数（合并前 - 1 之和） */
   const dupCount = packs.reduce((s, p) => s + Math.max(0, (p.mergedCount ?? 1) - 1), 0);
+  /** 可解压的包数（决定"全部解压"是否可用） */
+  const extractableCount = packs.filter((p) => p.extractable).length;
 
   return (
     <div
@@ -170,6 +188,8 @@ export function PackList({ onAdd, onPick }: { onAdd: () => void; onPick: () => v
       onDragLeave={() => setActive(false)}
       onDrop={(e) => {
         e.preventDefault();
+        // 阻止冒泡到 window 的全局 drop 监听，否则同一批文件会被 addPaths 处理两次
+        e.stopPropagation();
         setActive(false);
         const paths = Array.from(e.dataTransfer.files)
           .map((f) => window.api.pathForFile(f))
@@ -188,6 +208,15 @@ export function PackList({ onAdd, onPick }: { onAdd: () => void; onPick: () => v
         </Button>
         <Button size="sm" icon="play" onClick={() => void startExtractFromSelection()}>
           解压选中
+        </Button>
+        <Button
+          size="sm"
+          icon="play-circle"
+          disabled={extractableCount === 0}
+          onClick={() => void startExtractAll()}
+          title="把清单里所有可解压的包一次性加入队列"
+        >
+          全部解压{extractableCount > 1 ? `（${extractableCount}）` : ''}
         </Button>
         <Button
           size="sm"
@@ -280,16 +309,5 @@ export function Workspace({ onPick }: { onPick: () => void }) {
         </div>
       ) : null}
     </section>
-  );
-}
-
-/* ==================================================================
-   空状态（复用）
-   ================================================================== */
-export function PanelEmpty({ icon, title, desc }: { icon: Parameters<typeof EmptyState>[0]['icon']; title: string; desc?: string }) {
-  return (
-    <div className="p-6">
-      <EmptyState icon={icon} title={title} desc={desc} />
-    </div>
   );
 }

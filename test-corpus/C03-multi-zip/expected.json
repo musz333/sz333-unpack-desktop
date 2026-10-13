@@ -1,0 +1,20 @@
+{
+    "id":  "C03-multi-zip",
+    "dir":  "C:\\Users\\zk\\Desktop\\交付-v1.0.6\\release-1.0.7\\sz333-unpack-1.0.7-src\\test-corpus\\C03-multi-zip",
+    "baselineOk":  true,
+    "title":  "多文件 zip（3 文件）",
+    "format":  "zip",
+    "actual":  {
+                   "dirs":  0,
+                   "files":  3,
+                   "encrypted":  false,
+                   "entries":  3,
+                   "code":  0,
+                   "listOk":  true,
+                   "format":  "zip"
+               },
+    "archive":  "C03-multi.zip",
+    "goal":  "P0-2：zip 走同一解析路径，格式应识别为 zip",
+    "encrypted":  false,
+    "password":  ""
+}

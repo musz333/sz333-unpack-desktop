@@ -1,0 +1,38 @@
+
+7-Zip 26.02 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+
+Scanning the drive for archives:
+1 file, 270 bytes (1 KiB)
+
+Listing archive: C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C04-encrypted-7z\C04-enc.7z
+
+--
+Path = C:\Users\zk\Desktop\交付-v1.0.6\release-1.0.7\sz333-unpack-1.0.7-src\test-corpus\C04-encrypted-7z\C04-enc.7z
+Type = 7z
+Physical Size = 270
+Headers Size = 222
+Method = LZMA2:12 7zAES
+Solid = +
+Blocks = 1
+
+----------
+Path = secret1.txt
+Size = 19
+Packed Size = 48
+Modified = 2026-10-07 10:12:35.7423431
+Attributes = A
+CRC = 7E3EA55F
+Encrypted = +
+Method = LZMA2:12 7zAES:19
+Block = 0
+
+Path = secret2.txt
+Size = 19
+Packed Size = 
+Modified = 2026-10-07 10:12:35.7443566
+Attributes = A
+CRC = 103E05B4
+Encrypted = +
+Method = LZMA2:12 7zAES:19
+Block = 0
+

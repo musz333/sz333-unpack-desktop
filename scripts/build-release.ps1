@@ -12,11 +12,11 @@
 #     模板是 '${productName}-${version}-${arch}-${env.BUILD_KIND}.exe'，
 #     而 ${arch} 本身就会展开成 'x64'，所以这里只能填 'setup'，
 #     填 'x64-setup' 会得到 `...-x64-x64-setup.exe`（重复的 x64）。
-#     最终名：`sz333 解压工具-1.0.5-x64-setup.exe`
+#     最终名：`sz333 解压工具-1.0.6-x64-setup.exe`
 #   · 便携版有自己的 portable.artifactName（`...-便携版.exe`）覆盖它，不受影响
 #   · 但 electron-builder 仍会对 win 目标求值该模板，所以必须定义
 #   · 发布时 publish-release.ps1 会把两者重命名为 ASCII：
-#     `sz333-unpack-1.0.5-setup-x64.exe` / `sz333-unpack-1.0.5-portable-x64.exe`
+#     `sz333-unpack-1.0.6-setup-x64.exe` / `sz333-unpack-1.0.6-portable-x64.exe`
 #     （它靠 *setup.exe / *便携版*.exe 通配找本地文件）
 #
 # 用法：pwsh -File scripts\build-release.ps1
